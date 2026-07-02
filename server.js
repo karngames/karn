@@ -8,7 +8,7 @@
 const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto'),os=require('os');
 
 const argi=process.argv.indexOf('--port');
-const PORT=argi>-1?+process.argv[argi+1]:8081;
+const PORT=argi>-1?+process.argv[argi+1]:+(process.env.PORT||8081);
 const DIR=__dirname;
 const DATA=path.join(DIR,'data');
 fs.mkdirSync(DATA,{recursive:true});
