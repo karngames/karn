@@ -110,22 +110,14 @@ function maybeMailLoginLink(u,req){
   return true;
 }
 function maskEmail(e){const i=e.indexOf('@');return e[0]+'***'+(i>-1?e.slice(i):'');}
-/* minimal SMTP-over-SSL client (port 465, AUTH LOGIN — e.g. Gmail app password) */
+/* minimal SMTP client (port 587, STARTTLS + AUTH LOGIN — e.g. Gmail app password) */
 function sendMail(to,subject,text){
   return new Promise((resolve,reject)=>{
     const cfg=misc.smtp||{};
     if(!cfg.host||!cfg.user)return reject(new Error('Email service not configured'));
-    let sock;
-    try{
-      const port=+cfg.port||465;
-      sock=cfg.plain    /* plain TCP for local relays / testing only */
-        ?require('net').connect({host:cfg.host,port})
-        :require('tls').connect({host:cfg.host,port,servername:cfg.host});
-    }catch(e){return reject(e);}
     const from=cfg.from||cfg.user;
     const b64=s=>Buffer.from(String(s)).toString('base64');
-    const steps=[
-      {expect:220,send:'EHLO karnserver'},
+    const authSteps=[
       {expect:250,send:'AUTH LOGIN'},
       {expect:334,send:b64(cfg.user)},
       {expect:334,send:b64(cfg.pass)},
@@ -137,37 +129,72 @@ function sendMail(to,subject,text){
       {expect:250,send:'QUIT'},
       {expect:221,send:null}
     ];
-    let idx=0,buf='',done=false;
+    let buf='',done=false,tlsSock=null;
+    const port=+cfg.port||587;
     const nice=e=>{
       const m=String(e&&e.message||e);
       if(/ENOTFOUND|EAI_AGAIN/.test(m))return new Error('SMTP host not found — it must be a mail server name like smtp.gmail.com (not an email address)');
-      if(/ECONNREFUSED/.test(m))return new Error('The mail server refused the connection — check the host and port (465)');
-      if(/timeout/i.test(m))return new Error('The mail server did not respond — check the host, and that port 465 (SSL) is right for your provider');
+      if(/ECONNREFUSED/.test(m))return new Error('The mail server refused the connection — check the host and port (587)');
+      if(/timeout/i.test(m))return new Error('The mail server did not respond — check the host, and that port 587 (STARTTLS) is right for your provider');
       if(/535|534/.test(m))return new Error('Login refused by the mail server — check the email and app password (Google needs 2-step verification + an app password, not your normal password)');
       return e;
     };
-    const finish=err=>{if(done)return;done=true;try{sock.destroy();}catch(_){}err?reject(nice(err)):resolve(true);};
-    sock.setTimeout(10000,()=>finish(new Error('SMTP timeout')));
-    sock.on('error',e=>finish(e));
-    sock.on('data',d=>{
+    const finish=err=>{
+      if(done)return;done=true;
+      try{(tlsSock||plainSock).destroy();}catch(_){}
+      err?reject(nice(err)):resolve(true);
+    };
+    /* plain TCP connection first — STARTTLS upgrades it after EHLO */
+    let plainSock;
+    try{plainSock=require('net').connect({host:cfg.host,port});}catch(e){return reject(e);}
+    plainSock.setTimeout(10000,()=>finish(new Error('SMTP timeout')));
+    plainSock.on('error',e=>finish(e));
+    let phase='greeting'; /* greeting → ehlo → starttls → auth */
+    const processLine=L=>{
+      const codeN=+L.slice(0,3);
+      if(phase==='greeting'){
+        if(codeN!==220)return finish(new Error('SMTP '+codeN+': '+L.slice(4,120)));
+        phase='ehlo';plainSock.write('EHLO karnserver\r\n');
+      } else if(phase==='ehlo'){
+        if(codeN!==250)return finish(new Error('SMTP '+codeN+': '+L.slice(4,120)));
+        if(cfg.plain){
+          /* plain TCP relay — skip TLS, go straight to auth */
+          phase='auth';authIdx=0;plainSock.write('AUTH LOGIN\r\n');
+        } else {
+          phase='starttls';plainSock.write('STARTTLS\r\n');
+        }
+      } else if(phase==='starttls'){
+        if(codeN!==220)return finish(new Error('STARTTLS rejected ('+codeN+'): '+L.slice(4,120)));
+        /* upgrade the socket to TLS */
+        plainSock.removeAllListeners('data');
+        tlsSock=require('tls').connect({socket:plainSock,host:cfg.host,servername:cfg.host},()=>{
+          phase='auth';authIdx=0;tlsSock.write('AUTH LOGIN\r\n');
+        });
+        tlsSock.setTimeout(10000,()=>finish(new Error('SMTP timeout')));
+        tlsSock.on('error',e=>finish(e));
+        tlsSock.on('data',onData);
+      } else if(phase==='auth'){
+        const st=authSteps[authIdx];
+        if(!st)return finish();
+        if(codeN!==st.expect)return finish(new Error('SMTP '+codeN+': '+L.slice(4,120)));
+        authIdx++;
+        if(st.send!=null)(tlsSock||plainSock).write(st.send+'\r\n');
+        else finish();
+      }
+    };
+    let authIdx=0;
+    const onData=d=>{
       buf+=d.toString();
       if(!/\r?\n$/.test(buf))return;          /* wait for a complete line */
-      const lines=buf.split(/\r?\n/);
+      const lines=buf.split(/\r?\n/);buf='';
       for(let i=lines.length-1;i>=0;i--){
         const L=lines[i];
         if(!L)continue;
-        if(/^\d{3} /.test(L)){
-          const codeN=+L.slice(0,3);buf='';
-          const st=steps[idx];
-          if(!st)return finish();
-          if(codeN!==st.expect)return finish(new Error('SMTP '+codeN+': '+L.slice(4,120)));
-          idx++;
-          if(st.send!=null)sock.write(st.send+'\r\n');
-          else finish();
-        }
+        if(/^\d{3} /.test(L)){processLine(L);}
         break;
       }
-    });
+    };
+    plainSock.on('data',onData);
   });
 }
 const ADMIN_NAMES=['rubenhillier'];   /* these usernames are ALWAYS admins */
@@ -1013,7 +1040,7 @@ The staff team will get back to you on the ticket.`);
       if(!smtpUser||!smtpUser.includes('@'))
         return bad(res,'Enter the full email address you are sending from');
       if(!host)host='smtp.gmail.com';   /* Google-managed mail (gmail + custom Google domains) */
-      misc.smtp={host,port:+body.port||465,user:smtpUser,plain:!!body.plain,
+      misc.smtp={host,port:+body.port||587,user:smtpUser,plain:!!body.plain,
         pass:body.pass?String(body.pass).replace(/\s+/g,''):(misc.smtp?misc.smtp.pass:''),
         from:String(body.from||'').trim()||smtpUser};
       if(!misc.smtp.pass)return bad(res,'Enter the app password');
