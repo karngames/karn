@@ -15,9 +15,14 @@
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{
-  background:radial-gradient(1100px 700px at 25% -10%, #12241d 0%, var(--bg) 62%);
+  background:var(--bg);
   color:var(--ink); font-family:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
   min-height:100vh; overflow-x:hidden;
+}
+/* the ambient glow lives on a fixed layer so scrolling never moves or reseats it */
+body::before{
+  content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(1100px 700px at 25% -10%, #12241d 0%, var(--bg) 62%);
 }
 #appwrap{display:flex;min-height:100vh;align-items:stretch}
 #appcol{flex:1;display:flex;flex-direction:column;min-width:0}
@@ -3410,8 +3415,8 @@ function renderRulesPage(){
   <div class="card"><h3>🎯 Choosing a gun — the why</h3>
     ${[['sg','Small Gun (1 slot)','Modest reach, but it leaves room for armour — the backbone of a durable line.'],
        ['bg','Big Gun (2 slots)','The only arc weapon that hits for −2. It cracks armoured tanks in half the shots; on a Heavy it costs 2 of 3 slots, so armour <i>or</i> nothing.'],
-       ['sn','Sniper (1 slot · Light only)','Your Heavy-killer — range 3, shoots past tanks, +1 vs Heavies. The trade: the carrier slows to speed 1 and dies to a stiff breeze, so park it behind walls with a clean lane.'],
-       ['ds','Double Sniper (Level 2 upgrade)','Range 4, −2 base (−3 vs Heavies). The scariest gun in the game on the longest lanes — the reward for reaching the enemy back rank.'],
+       ['sn','Sniper (1 slot · Light only)','Your Heavy-killer — range 4, −1 HP, shoots past tanks, +1 vs Heavies. The trade: the carrier slows to speed 1 and dies to a stiff breeze, so park it behind walls with a clean lane.'],
+       ['ds','Double Sniper (Level 2 upgrade)','Range 5, −2 HP (−3 vs Heavies). The scariest gun in the game on the longest lanes — the reward for reaching the enemy back rank.'],
        ['dg','Dirt Gun (2 slots · Heavy only · Level 2)','A siege cannon: <b>−4 HP straight ahead</b> — enough to one-shot most tanks — but only −1 on its side lines. Devastating where it points, weak everywhere else; your opponent will fight to stay out of its lane.']]
       .map(([t,n,d])=>`<div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
         <div style="flex:none">${compSVG(t,44)}</div>
@@ -3440,11 +3445,11 @@ function renderRulesPage(){
 
   <div class="card"><h3>🎯 Sniper — 1 slot, Light hulls only</h3>
     ${gunDiag('sn',7,3,0,1,2,{pieces:[{x:2,y:1,owner:0,base:'M',gun:'sg',dir:2},{x:3,y:1,owner:1,base:'H',gun:'bg',dir:6}]})}
-    <div class="hint">One single line, range <b>3</b> — but it <b>shoots past tanks</b>: here it threatens the enemy Heavy straight through a friendly. Armour-piercing rounds do <b>+1 damage vs Heavies</b>. Walls still stop it.</div></div>
+    <div class="hint">One single line, range <b>4</b>, −1 HP — and it <b>shoots past tanks</b>: here it threatens the enemy Heavy straight through a friendly. Armour-piercing rounds do <b>+1 damage vs Heavies</b>. Walls still stop it.</div></div>
 
   <div class="card"><h3>🎯🎯 Double Sniper — Level 2 upgrade</h3>
     ${gunDiag('ds',7,3,0,1,2)}
-    <div class="hint">Range <b>4</b>, hits for <b>−2 HP</b> (−3 vs Heavies). Unlocked at Level 2 as an upgrade for snipers.</div></div>
+    <div class="hint">Range <b>5</b> — the longest reach in the game — hitting for <b>−2 HP</b> (−3 vs Heavies). Unlocked at Level 2 as an upgrade for snipers.</div></div>
 
   <div class="card"><h3>💥 Dirt Gun — Level 2 · Heavy only · 2 slots</h3>
     ${gunDiag('dg',5,5,2,3,0,{labels:[[2,2,'−4'],[2,1,'−4'],[1,2,'−1'],[3,2,'−1'],[0,1,'−1'],[4,1,'−1'],[1,3,'−1'],[3,3,'−1'],[0,3,'−1'],[4,3,'−1']]})}
