@@ -8,7 +8,7 @@
 const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto'),os=require('os');
 
 const argi=process.argv.indexOf('--port');
-const PORT=argi>-1?+process.argv[argi+1]:+(process.env.PORT||8081);
+const PORT=argi>-1?+process.argv[argi+1]:(+process.env.PORT||8081); /* hosts like Railway set PORT */
 const DIR=__dirname;
 const DATA=path.join(DIR,'data');
 fs.mkdirSync(DATA,{recursive:true});
@@ -46,6 +46,16 @@ function sanitizePages(pg){
   }
   for(const k of['rules','play'])
     if(pg.extends&&pg.extends[k])out.extends[k]=clean(pg.extends[k]);
+  out.overrides={rules:{}};
+  if(pg.overrides&&pg.overrides.rules){
+    let n=0;
+    for(const k in pg.overrides.rules){
+      if(!/^[a-z0-9_]{2,20}$/.test(k)||++n>40)continue;
+      const o=pg.overrides.rules[k]||{};
+      out.overrides.rules[k]={title:String(o.title||'').slice(0,80),
+        pre:String(o.pre||'').slice(0,5000),post:String(o.post||'').slice(0,5000)};
+    }
+  }
   return out;
 }
 const num=(v,lo,hi,dflt)=>{const n=Math.round(+v);return Number.isFinite(n)?Math.max(lo,Math.min(hi,n)):dflt;};
@@ -110,14 +120,53 @@ function maybeMailLoginLink(u,req){
   return true;
 }
 function maskEmail(e){const i=e.indexOf('@');return e[0]+'***'+(i>-1?e.slice(i):'');}
-/* minimal SMTP client (port 587, STARTTLS + AUTH LOGIN — e.g. Gmail app password) */
-function sendMail(to,subject,text){
+/* minimal SMTP-over-SSL client (port 465, AUTH LOGIN — e.g. Gmail app password) */
+/* SendGrid HTTP API — for hosts (Railway, Render, Fly…) that block outbound
+   SMTP entirely. Auto-used when the saved key starts with "SG.".            */
+function sendViaSendGrid(to,subject,text){
   return new Promise((resolve,reject)=>{
     const cfg=misc.smtp||{};
+    const payload=JSON.stringify({
+      personalizations:[{to:[{email:to}]}],
+      from:{email:cfg.from||cfg.user,name:'KARN'},
+      subject,
+      content:[{type:'text/plain',value:text}]
+    });
+    const req2=require('https').request({
+      host:'api.sendgrid.com',port:443,path:'/v3/mail/send',method:'POST',
+      headers:{'Authorization':'Bearer '+cfg.pass,'Content-Type':'application/json',
+        'Content-Length':Buffer.byteLength(payload)},
+      timeout:10000
+    },res2=>{
+      let b='';res2.on('data',d=>b+=d);
+      res2.on('end',()=>{
+        if(res2.statusCode>=200&&res2.statusCode<300)return resolve(true);
+        if(res2.statusCode===401)return reject(new Error('SendGrid rejected the API key — check it starts with SG. and is active'));
+        if(res2.statusCode===403)return reject(new Error('SendGrid refused the sender address — verify "'+(cfg.from||cfg.user)+'" as a Single Sender or authenticated domain in SendGrid'));
+        reject(new Error('SendGrid error '+res2.statusCode+': '+b.slice(0,140)));
+      });
+    });
+    req2.on('timeout',()=>{req2.destroy(new Error('SendGrid API timeout'));});
+    req2.on('error',e=>reject(new Error('SendGrid connection failed: '+e.message)));
+    req2.end(payload);
+  });
+}
+function sendMail(to,subject,text){
+  const cfg=misc.smtp||{};
+  if(cfg.pass&&String(cfg.pass).startsWith('SG.'))return sendViaSendGrid(to,subject,text);
+  return new Promise((resolve,reject)=>{
     if(!cfg.host||!cfg.user)return reject(new Error('Email service not configured'));
+    let sock;
+    try{
+      const port=+cfg.port||465;
+      sock=cfg.plain    /* plain TCP for local relays / testing only */
+        ?require('net').connect({host:cfg.host,port})
+        :require('tls').connect({host:cfg.host,port,servername:cfg.host});
+    }catch(e){return reject(e);}
     const from=cfg.from||cfg.user;
     const b64=s=>Buffer.from(String(s)).toString('base64');
-    const authSteps=[
+    const steps=[
+      {expect:220,send:'EHLO karnserver'},
       {expect:250,send:'AUTH LOGIN'},
       {expect:334,send:b64(cfg.user)},
       {expect:334,send:b64(cfg.pass)},
@@ -129,72 +178,37 @@ function sendMail(to,subject,text){
       {expect:250,send:'QUIT'},
       {expect:221,send:null}
     ];
-    let buf='',done=false,tlsSock=null;
-    const port=+cfg.port||587;
+    let idx=0,buf='',done=false;
     const nice=e=>{
       const m=String(e&&e.message||e);
       if(/ENOTFOUND|EAI_AGAIN/.test(m))return new Error('SMTP host not found — it must be a mail server name like smtp.gmail.com (not an email address)');
-      if(/ECONNREFUSED/.test(m))return new Error('The mail server refused the connection — check the host and port (587)');
-      if(/timeout/i.test(m))return new Error('The mail server did not respond — check the host, and that port 587 (STARTTLS) is right for your provider');
+      if(/ECONNREFUSED/.test(m))return new Error('The mail server refused the connection — check the host and port (465)');
+      if(/timeout/i.test(m))return new Error('The mail server did not respond — check the host, and that port 465 (SSL) is right for your provider');
       if(/535|534/.test(m))return new Error('Login refused by the mail server — check the email and app password (Google needs 2-step verification + an app password, not your normal password)');
       return e;
     };
-    const finish=err=>{
-      if(done)return;done=true;
-      try{(tlsSock||plainSock).destroy();}catch(_){}
-      err?reject(nice(err)):resolve(true);
-    };
-    /* plain TCP connection first — STARTTLS upgrades it after EHLO */
-    let plainSock;
-    try{plainSock=require('net').connect({host:cfg.host,port});}catch(e){return reject(e);}
-    plainSock.setTimeout(10000,()=>finish(new Error('SMTP timeout')));
-    plainSock.on('error',e=>finish(e));
-    let phase='greeting'; /* greeting → ehlo → starttls → auth */
-    const processLine=L=>{
-      const codeN=+L.slice(0,3);
-      if(phase==='greeting'){
-        if(codeN!==220)return finish(new Error('SMTP '+codeN+': '+L.slice(4,120)));
-        phase='ehlo';plainSock.write('EHLO karnserver\r\n');
-      } else if(phase==='ehlo'){
-        if(codeN!==250)return finish(new Error('SMTP '+codeN+': '+L.slice(4,120)));
-        if(cfg.plain){
-          /* plain TCP relay — skip TLS, go straight to auth */
-          phase='auth';authIdx=0;plainSock.write('AUTH LOGIN\r\n');
-        } else {
-          phase='starttls';plainSock.write('STARTTLS\r\n');
-        }
-      } else if(phase==='starttls'){
-        if(codeN!==220)return finish(new Error('STARTTLS rejected ('+codeN+'): '+L.slice(4,120)));
-        /* upgrade the socket to TLS */
-        plainSock.removeAllListeners('data');
-        tlsSock=require('tls').connect({socket:plainSock,host:cfg.host,servername:cfg.host},()=>{
-          phase='auth';authIdx=0;tlsSock.write('AUTH LOGIN\r\n');
-        });
-        tlsSock.setTimeout(10000,()=>finish(new Error('SMTP timeout')));
-        tlsSock.on('error',e=>finish(e));
-        tlsSock.on('data',onData);
-      } else if(phase==='auth'){
-        const st=authSteps[authIdx];
-        if(!st)return finish();
-        if(codeN!==st.expect)return finish(new Error('SMTP '+codeN+': '+L.slice(4,120)));
-        authIdx++;
-        if(st.send!=null)(tlsSock||plainSock).write(st.send+'\r\n');
-        else finish();
-      }
-    };
-    let authIdx=0;
-    const onData=d=>{
+    const finish=err=>{if(done)return;done=true;try{sock.destroy();}catch(_){}err?reject(nice(err)):resolve(true);};
+    sock.setTimeout(10000,()=>finish(new Error('SMTP timeout')));
+    sock.on('error',e=>finish(e));
+    sock.on('data',d=>{
       buf+=d.toString();
       if(!/\r?\n$/.test(buf))return;          /* wait for a complete line */
-      const lines=buf.split(/\r?\n/);buf='';
+      const lines=buf.split(/\r?\n/);
       for(let i=lines.length-1;i>=0;i--){
         const L=lines[i];
         if(!L)continue;
-        if(/^\d{3} /.test(L)){processLine(L);}
+        if(/^\d{3} /.test(L)){
+          const codeN=+L.slice(0,3);buf='';
+          const st=steps[idx];
+          if(!st)return finish();
+          if(codeN!==st.expect)return finish(new Error('SMTP '+codeN+': '+L.slice(4,120)));
+          idx++;
+          if(st.send!=null)sock.write(st.send+'\r\n');
+          else finish();
+        }
         break;
       }
-    };
-    plainSock.on('data',onData);
+    });
   });
 }
 const ADMIN_NAMES=['rubenhillier'];   /* these usernames are ALWAYS admins */
@@ -1039,8 +1053,9 @@ The staff team will get back to you on the ticket.`);
         return bad(res,'The SMTP host must be a server name, not an email address. For Gmail and Google Workspace domains use smtp.gmail.com — or just leave the host blank and I will use it automatically.');
       if(!smtpUser||!smtpUser.includes('@'))
         return bad(res,'Enter the full email address you are sending from');
-      if(!host)host='smtp.gmail.com';   /* Google-managed mail (gmail + custom Google domains) */
-      misc.smtp={host,port:+body.port||587,user:smtpUser,plain:!!body.plain,
+      if(String(body.pass||'').trim().startsWith('SG.'))host='sendgrid';  /* HTTP API mode */
+      else if(!host)host='smtp.gmail.com';   /* Google-managed mail (gmail + custom Google domains) */
+      misc.smtp={host,port:+body.port||465,user:smtpUser,plain:!!body.plain,
         pass:body.pass?String(body.pass).replace(/\s+/g,''):(misc.smtp?misc.smtp.pass:''),
         from:String(body.from||'').trim()||smtpUser};
       if(!misc.smtp.pass)return bad(res,'Enter the app password');
@@ -1270,8 +1285,23 @@ The staff team will get back to you on the ticket.`);
       if(m.events.length>=4000)return bad(res,'Match event limit reached');
       const ev={n:m.events.length+1,by:side,type:String(body.type||'').slice(0,20),data:body.data??null};
       m.events.push(ev);m.last=Date.now();
+      if(ev.type==='setup'){                    /* setup clocks */
+        if(side===0)m.wSetupTs=Date.now();      /* Black's 2 minutes start now */
+        else m.setupDone=true;
+      }
       metrics.eventsRelayed++;
       return json(res,200,{n:ev.n});
+    }
+    if(sub==='timeout'&&req.method==='POST'){
+      /* setup forfeit: 2 minutes per side to deploy, verified on the server clock */
+      if(m.status==='done')return json(res,200,{result:m.result});
+      if(m.mode!=='setup'||m.setupDone)return bad(res,'No setup timeout to claim');
+      const pending=m.wSetupTs?1:0;
+      const t0=pending===0?m.started:m.wSetupTs;
+      if(Date.now()-t0<120e3)return bad(res,'They still have time on the setup clock');
+      finalizeMatch(m,1-pending,pending);
+      console.log('match',m.id,'setup timeout —',pending===0?m.host:m.guest,'forfeits');
+      return json(res,200,{result:m.result});
     }
     if(sub==='result'&&req.method==='POST'){
       if(m.status==='done')return json(res,200,{result:m.result});
