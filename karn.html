@@ -252,7 +252,7 @@ const GUNS={
   bg:{name:'Big Gun',   ap:2,rng:2,arc:1,dmg:2},
   sn:{name:'Sniper',    ap:1,rng:4,arc:0,dmg:1,light:1},
   ds:{name:'Double Sniper',ap:1,rng:5,arc:0,dmg:2,light:1,lvl:2},
-  dg:{name:'Dirt Gun',  ap:2,rng:2,arc:1,dmg:1,heavy:1,lvl:2}
+  dg:{name:'Dirt Gun',  ap:2,rng:1,arc:1,all:1,dmg:1,heavy:1,lvl:2}
 };
 const PNAME=['White','Black'];
 /* tunable game rules — the admin balance panel can override all of these */
@@ -362,7 +362,7 @@ function rawTargets(s,p,dir){
       const vx=q.x-p.x,vy=q.y-p.y,d=Math.max(Math.abs(vx),Math.abs(vy));
       if(d<1||d>g.rng)continue;
       if(!onLine(vx,vy))continue;              /* queen lines only */
-      if(vx*fx+vy*fy<0)continue;               /* 180° front arc */
+      if(!g.all&&vx*fx+vy*fy<0)continue;       /* 180° front arc (unless 360°) */
       if(!losClear(s,p.x,p.y,q.x,q.y))continue;
       out.push(q);
     }
@@ -393,7 +393,7 @@ function threatCells(s,p){
       const vx=x-p.x,vy=y-p.y;
       if(Math.max(Math.abs(vx),Math.abs(vy))>g.rng)continue;
       if(!onLine(vx,vy))continue;
-      if(vx*fx+vy*fy<0)continue;
+      if(!g.all&&vx*fx+vy*fy<0)continue;
       if(wallAt(s,x,y))continue;
       if(!losClear(s,p.x,p.y,x,y))continue;
       out.push({x,y});
@@ -509,7 +509,7 @@ function bestShotValue(s,p){
       if(d<1||d>g.rng)continue;
       if(!onLine(vx,vy))continue;
       if(!losClear(s,p.x,p.y,t.x,t.y))continue;
-      const f=(vx*fx+vy*fy>=0)?1:0.72;
+      const f=(g.all||vx*fx+vy*fy>=0)?1:0.72;
       const v=shotScore(p,t)*f;
       if(v>best)best=v;
     }
@@ -1639,7 +1639,7 @@ function edRender(){
     <div class="optgrid">
       ${gunBtn('none','None')}${Object.keys(GUNS).map(k=>gunBtn(k,GUNS[k].name)).join('')}
     </div>
-    <div class="hint">Small: 180° · range 1 · −1 · 1 AP &nbsp;|&nbsp; Big: 180° · range 2 · <b>−2</b> · 2 AP &nbsp;|&nbsp; Sniper: one line · range 4 · slows to SPD 1 &nbsp;|&nbsp; Double: range 5 · −2 &nbsp;|&nbsp; Dirt: 180° · range 2 · <b>−4 ahead</b>, −1 sides · 2 AP · Heavy · Lv2</div>
+    <div class="hint">Small: 180° · range 1 · −1 · 1 AP &nbsp;|&nbsp; Big: 180° · range 2 · <b>−2</b> · 2 AP &nbsp;|&nbsp; Sniper: one line · range 4 · slows to SPD 1 &nbsp;|&nbsp; Double: range 5 · −2 &nbsp;|&nbsp; Dirt: <b>360°</b> · range 1 · <b>−4 ahead</b>, −1 around · 2 AP · Heavy · Lv2</div>
     <h4>Armour (+1 HP each, 1 AP)</h4>
     <div class="row">
       <button class="btn small" ${sp.armor>0?'':'disabled'} onclick="edArmor(-1)">−</button>
@@ -1700,7 +1700,7 @@ function showRules(){
     <p>Choose to deal <b>HP damage</b> or <b>shoot out the tracks</b>: a tracked-out piece cannot move until its owner spends an action repairing it, and it moves again only the round after the repair.</p>
     <p><b>Line of sight.</b> Guns fire in <b>straight or diagonal lines, like a chess queen</b>. A 180° gun can fire down any of the five lines that aren't behind it; snipers fire only down the single line they face. Every square on the line to the target must be clear — no shooting through walls or other tanks. Exactly like a queen, a diagonal shot passes cleanly through the gap between two diagonally-touching walls. Exception: <b>snipers</b> (and double snipers) can pick off <b>any enemy tank along their firing line</b>, even behind other tanks. Walls still block sniper fire.</p>
     <h4>Level 2</h4>
-    <p>When your first piece reaches the enemy back rank you reach <b>Level 2</b>: double snipers, the Dirt Gun (Heavy only, 180°, range 2, −4 HP straight ahead / −1 to the sides, 2 AP) and speed-boost components (+1 SPD, costs 1 AP, not on lights) become available when refitting at your own back rank. Refitting is free but only while the piece stays on your back rank.</p>
+    <p>When your first piece reaches the enemy back rank you reach <b>Level 2</b>: double snipers, the Dirt Gun (Heavy only, 360°, range 1, −4 HP straight ahead / −1 all around, 2 AP) and speed-boost components (+1 SPD, costs 1 AP, not on lights) become available when refitting at your own back rank. Refitting is free but only while the piece stays on your back rank.</p>
     <h4>Setup</h4>
     <p>6 centre walls (3 columns, second row same or mirrored — 112 legal setups), then each side places 4 walls of their own (in their first three rows, but never on the back rank) and deploys 8 pieces (max 4 per base type) in their first three rows. White deploys and moves first.</p>
     </div><div style="height:10px"></div><button class="btn gold" onclick="dismissModal()">Close</button>`,true);
@@ -3417,7 +3417,7 @@ function renderRulesPage(){
        ['bg','Big Gun (2 slots)','The only arc weapon that hits for −2. It cracks armoured tanks in half the shots; on a Heavy it costs 2 of 3 slots, so armour <i>or</i> nothing.'],
        ['sn','Sniper (1 slot · Light only)','Your Heavy-killer — range 4, −1 HP, shoots past tanks, +1 vs Heavies. The trade: the carrier slows to speed 1 and dies to a stiff breeze, so park it behind walls with a clean lane.'],
        ['ds','Double Sniper (Level 2 upgrade)','Range 5, −2 HP (−3 vs Heavies). The scariest gun in the game on the longest lanes — the reward for reaching the enemy back rank.'],
-       ['dg','Dirt Gun (2 slots · Heavy only · Level 2)','A siege cannon: <b>−4 HP straight ahead</b> — enough to one-shot most tanks — but only −1 on its side lines. Devastating where it points, weak everywhere else; your opponent will fight to stay out of its lane.']]
+       ['dg','Dirt Gun (2 slots · Heavy only · Level 2)','The point-blank brawler: range 1 but <b>all around</b> — every adjacent square is a target, even behind. <b>−4 HP dead ahead</b> one-shots most tanks; −1 everywhere else. Park it in a choke point and dare them to come close.']]
       .map(([t,n,d])=>`<div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
         <div style="flex:none">${compSVG(t,44)}</div>
         <div class="hint" style="margin:0;line-height:1.55"><b style="color:var(--ink)">${n}:</b> ${d}</div></div>`).join('')}</div>
@@ -3452,8 +3452,8 @@ function renderRulesPage(){
     <div class="hint">Range <b>5</b> — the longest reach in the game — hitting for <b>−2 HP</b> (−3 vs Heavies). Unlocked at Level 2 as an upgrade for snipers.</div></div>
 
   <div class="card"><h3>💥 Dirt Gun — Level 2 · Heavy only · 2 slots</h3>
-    ${gunDiag('dg',5,5,2,3,0,{labels:[[2,2,'−4'],[2,1,'−4'],[1,2,'−1'],[3,2,'−1'],[0,1,'−1'],[4,1,'−1'],[1,3,'−1'],[3,3,'−1'],[0,3,'−1'],[4,3,'−1']]})}
-    <div class="hint">The siege cannon: same 180° fan as a Big Gun, but <b>−4 HP dead ahead</b> — a one-shot kill on most tanks — and just −1 on the side lines. Everything depends on where it points, and rotating costs an action, so it telegraphs. Refit a Heavy at your back rank once you hit Level 2.</div></div>
+    ${gunDiag('dg',5,5,2,3,0,{labels:[[2,2,'−4'],[1,2,'−1'],[3,2,'−1'],[1,3,'−1'],[3,3,'−1'],[1,4,'−1'],[2,4,'−1'],[3,4,'−1']]})}
+    <div class="hint">The brawler cannon: <b>range 1, all 8 squares around it</b> — nothing adjacent is safe. <b>−4 HP dead ahead</b> (a one-shot on most tanks), −1 everywhere else. Rotating costs an action, so where it points matters. Refit a Heavy at your back rank once you hit Level 2.</div></div>
 
   <div class="card"><h3>📐 Line of sight</h3>
     ${gunDiag('bg',5,5,2,3,0,{walls:[[2,2]]})}
