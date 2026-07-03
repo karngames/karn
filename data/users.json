@@ -19,6 +19,35 @@
   "notifs": [
    {
     "id": 3,
+    "ts": 1783064018627,
+    "read": false,
+    "type": "ticket",
+    "text": "KARN Assistant replied to ticket #11",
+    "from": "KARN Assistant",
+    "data": {
+     "tid": 11
+    }
+   },
+   {
+    "id": 2,
+    "ts": 1783064018627,
+    "read": false,
+    "type": "info",
+    "text": "🙋 Ticket #11 (RubenHillier) needs a HUMAN: ban appeal — only the admin can lift bans",
+    "from": null,
+    "data": null
+   },
+   {
+    "id": 1,
+    "ts": 1783064018594,
+    "read": false,
+    "type": "info",
+    "text": "🛟 Support ticket #11 from RubenHillier: \"Was i banned\"",
+    "from": null,
+    "data": null
+   },
+   {
+    "id": 3,
     "ts": 1783026396650,
     "read": false,
     "type": "info",

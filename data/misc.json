@@ -85,8 +85,14 @@
    "exp": 1783028132115
   }
  },
- "fseq": 11,
+ "fseq": 13,
  "support": [
+  {
+   "id": 12,
+   "user": "RubenHillier",
+   "ts": 1783064018594,
+   "done": false
+  },
   {
    "id": 10,
    "user": "Willymonster",
@@ -126,6 +132,29 @@
   "from": "karnsupport@karngame.com"
  },
  "tickets": [
+  {
+   "id": 11,
+   "to": "RubenHillier",
+   "from": "support",
+   "subject": "Support request from RubenHillier",
+   "ts": 1783064018586,
+   "status": "open",
+   "key": "8f033b74b92ae4b6edaf27bfa38b7984",
+   "messages": [
+    {
+     "by": "RubenHillier",
+     "text": "Was i banned",
+     "ts": 1783064018594
+    },
+    {
+     "by": "KARN Assistant",
+     "text": "I understand you'd like your suspension reviewed. Account bans can only be lifted by the server administrator, so I've escalated your appeal to them directly with everything you've written here.\n\nWhat happens next: the admin reviews the ban reason and your message, then replies on this ticket. You'll get an email the moment they do.",
+     "ts": 1783064018627
+    }
+   ],
+   "human": true,
+   "botReplies": 1
+  },
   {
    "id": 9,
    "to": "Willymonster",
