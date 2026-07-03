@@ -93,6 +93,114 @@ function ticketLink(tk,req){
   return(typeof IS_TLS!=='undefined'&&IS_TLS?'https':'http')+'://'+
     ((req&&req.headers.host)||'localhost:'+PORT)+'/?ticket='+tk.key;
 }
+function makeRecovery(user,by){
+  const code=crypto.randomBytes(4).toString('hex').toUpperCase();
+  misc.recov[code]={user,by:by||'auto-email',exp:Date.now()+30*60e3};
+  saveS();
+  return code;
+}
+
+/* ============ KARN ASSISTANT — automated support agent ============
+   Triages every support ticket by intent, takes action where it can
+   (recovery codes, escalations, bug routing), follows up on replies,
+   and always hands over to a human on request.                       */
+const BOT='KARN Assistant';
+function agentSay(tk,text,req,extras){
+  tk.messages.push({by:BOT,text,ts:Date.now()});
+  tk.botReplies=(tk.botReplies||0)+1;
+  saveS();
+  if(users[tk.to]){
+    addNotif(tk.to,{type:'ticket',from:BOT,data:{tid:tk.id},
+      text:`${BOT} replied to ticket #${tk.id}`});
+    sendUserMail(tk.to,`[KARN Support] Re: Ticket #${tk.id} — ${tk.subject}`,
+      `Ticket #${tk.id} — new reply`,
+      text+'\n\nYou can read the whole conversation and reply using the button below — no login needed.',
+      'Reply "human" at any time to reach a real staff member.',
+      Object.assign({link:{label:'Open your ticket',url:ticketLink(tk,req)}},extras||{}));
+  }
+}
+function agentEscalate(tk,why){
+  tk.human=true;saveS();
+  notifyAdmins(`🙋 Ticket #${tk.id} (${tk.to}) needs a HUMAN: ${why}`);
+}
+function agentHandle(tk,msg,req){
+  if(tk.from!=='support'||tk.human||tk.status!=='open')return;
+  if((tk.botReplies||0)>=6){
+    agentEscalate(tk,'conversation limit reached');
+    agentSay(tk,`I've done what I can automatically, so I'm handing this over to the staff team — a real person will pick it up from here. Thanks for your patience!`,req);
+    return;
+  }
+  const m=String(msg||'').toLowerCase();
+  const u=users[tk.to];
+  const has=(...ws)=>ws.some(w=>m.includes(w));
+  /* explicit request for a person always wins */
+  if(has('human','person','real staff','speak to someone','agent','admin please','talk to staff')){
+    agentEscalate(tk,'user requested a human');
+    agentSay(tk,`Of course — I've flagged this ticket for the staff team and stepped aside. A real person will reply here as soon as they're available. Everything you've written above is already with them, so there's no need to repeat yourself.`,req);
+    return;
+  }
+  if(has('thank','solved','fixed','works now','all good','resolved','sorted')){
+    tk.status='closed';tk.closedBy=BOT;saveS();
+    if(users[tk.to])addNotif(tk.to,{type:'info',text:`Ticket #${tk.id} closed — glad it's sorted!`});
+    agentSayClosed(tk,req);
+    return;
+  }
+  if(has('ban','banned','unban','suspend','appeal')){
+    agentEscalate(tk,'ban appeal — only the admin can lift bans');
+    agentSay(tk,`I understand you'd like your suspension reviewed. Account bans can only be lifted by the server administrator, so I've escalated your appeal to them directly with everything you've written here.\n\nWhat happens next: the admin reviews the ban reason and your message, then replies on this ticket. You'll get an email the moment they do.`,req);
+    return;
+  }
+  if(has('password','log in','login','locked','forgot','cant get in',"can't get in",'sign in')){
+    if(u&&u.email&&misc.smtp&&misc.smtp.host){
+      const code=makeRecovery(tk.to);
+      agentSay(tk,`No problem — I've generated a fresh recovery code for you (it's in the box below and works once, for 30 minutes).\n\nHow to use it:\n1. Open the KARN site and click "Account recovery" on the login screen\n2. Enter the code\n3. Choose a new password — and a new username too, if you want one\n\nIf the code expires before you use it, just reply here and I'll send another.`,req,{code});
+    }else{
+      agentEscalate(tk,'password reset needed but no recovery email is linked');
+      agentSay(tk,`I'd love to email you a recovery code, but this account has no recovery email linked${misc.smtp&&misc.smtp.host?'':' (or the email service is offline)'} — so I've asked the staff team to generate one for you manually. They'll post it on this ticket shortly.`,req);
+    }
+    return;
+  }
+  if(has('username','rename','change my name','name change')){
+    if(u&&u.email&&misc.smtp&&misc.smtp.host){
+      const code=makeRecovery(tk.to);
+      agentSay(tk,`Happy to help with a name change! The recovery code below lets you pick a new username (and password) yourself:\n\n1. Open the KARN site → "Account recovery" on the login screen\n2. Enter the code\n3. Type your new username in the optional field and set a password\n\nAll your Elo, friends and match history follow the new name automatically.`,req,{code});
+    }else{
+      agentEscalate(tk,'rename requested — needs staff (no recovery email linked)');
+      agentSay(tk,`Name changes are done through account recovery, but there's no recovery email linked to this account — I've asked the staff team to sort you out with a manual code.`,req);
+    }
+    return;
+  }
+  if(has('bug','error','broken','glitch','crash','not working','stuck')){
+    misc.feedback.unshift({id:misc.fseq++,from:tk.to,text:'[via support ticket #'+tk.id+'] '+String(msg).slice(0,900),ts:Date.now()});
+    if(misc.feedback.length>200)misc.feedback.length=200;
+    saveS();
+    notifyAdmins(`🐛 Bug report from ticket #${tk.id} (${tk.to}) filed to the feedback inbox`);
+    agentSay(tk,`Thanks for the report — I've filed it straight into the admin's inbox with your exact description, so nothing gets lost.\n\nIf you can, reply with anything that helps reproduce it (what you clicked, what you expected, what happened instead). If you'd rather talk it through with a person, just reply "human".`,req);
+    return;
+  }
+  /* default: friendly triage */
+  agentSay(tk,`Thanks for getting in touch — I'm the automated KARN assistant and I handle most requests instantly. Here's what I can do right away:\n\n• "I forgot my password" — I'll email you a recovery code\n• "I want to change my username" — recovery code for that too\n• "I've been banned" — I'll escalate your appeal to the admin\n• "I found a bug" — I'll file it in the admin's inbox\n\nJust reply describing your problem — or reply "human" and I'll hand you straight to the staff team.`,req);
+}
+function agentSayClosed(tk,req){
+  if(users[tk.to])
+    sendUserMail(tk.to,`[KARN Support] Ticket #${tk.id} resolved`,
+      `Ticket #${tk.id} — resolved`,
+      `Glad we could help! This ticket is now closed.\n\nIf anything else comes up, open a new request via Support on the login screen, or the Feedback button in the game.\n\nSee you on the battlefield!`,
+      'A staff member can reopen this ticket at any time if needed.');
+}
+/* auto-close bot-resolved tickets that have gone quiet for 24h */
+setInterval(()=>{
+  const now=Date.now();
+  for(const tk of misc.tickets){
+    if(tk.status!=='open'||tk.from!=='support'||tk.human)continue;
+    const last=tk.messages[tk.messages.length-1];
+    if(last&&last.by===BOT&&now-last.ts>24*3600e3){
+      tk.status='closed';tk.closedBy=BOT;saveS();
+      if(users[tk.to])addNotif(tk.to,{type:'info',
+        text:`Ticket #${tk.id} auto-closed after 24h of quiet — reply via Support to reopen the conversation`});
+    }
+  }
+},10*60e3);
 let nseq=1;
 /* per-account login lockout (in memory) + emailed one-time login links */
 const lockouts={};
@@ -108,14 +216,9 @@ function maybeMailLoginLink(u,req){
   const link=(typeof IS_TLS!=='undefined'&&IS_TLS?'https':'http')+'://'+
     (req.headers.host||'localhost:'+PORT)+'/?loginkey='+k;
   sendUserMail(u,'[KARN] One-time login link','Locked out? Here is a direct way in',
-    `Someone (hopefully you) tried to log in to "${u}" too many times, so the\n`+
-    `account is temporarily locked.\n\n`+
-    `If it was you, use this one-time link to log straight in — it works once\n`+
-    `and expires in 15 minutes:\n\n`+
-    `    ${link}\n\n`+
-    `Logging in this way clears the lock immediately.\n`+
-    `If this wasn't you, your password held firm — but consider changing it\n`+
-    `once you're back in (or ask staff/admin to help via Support).`);
+    `Someone (hopefully you) tried to log in to "${u}" too many times, so the account is temporarily locked.\n\nIf it was you, the button below logs you straight in — it works once and expires in 15 minutes. Using it clears the lock immediately.\n\nIf this wasn't you, your password held firm — but consider changing it once you're back in.`,
+    'Not you? You can safely ignore this email.',
+    {link:{label:'🔓 Log me in',url:link}});
   lo.mailed=true;
   return true;
 }
@@ -123,14 +226,16 @@ function maskEmail(e){const i=e.indexOf('@');return e[0]+'***'+(i>-1?e.slice(i):
 /* minimal SMTP-over-SSL client (port 465, AUTH LOGIN — e.g. Gmail app password) */
 /* SendGrid HTTP API — for hosts (Railway, Render, Fly…) that block outbound
    SMTP entirely. Auto-used when the saved key starts with "SG.".            */
-function sendViaSendGrid(to,subject,text){
+function sendViaSendGrid(to,subject,text,html){
   return new Promise((resolve,reject)=>{
     const cfg=misc.smtp||{};
+    const content=[{type:'text/plain',value:text}];
+    if(html)content.push({type:'text/html',value:html});
     const payload=JSON.stringify({
       personalizations:[{to:[{email:to}]}],
       from:{email:cfg.from||cfg.user,name:'KARN'},
       subject,
-      content:[{type:'text/plain',value:text}]
+      content
     });
     const req2=require('https').request({
       host:'api.sendgrid.com',port:443,path:'/v3/mail/send',method:'POST',
@@ -151,9 +256,9 @@ function sendViaSendGrid(to,subject,text){
     req2.end(payload);
   });
 }
-function sendMail(to,subject,text){
+function sendMail(to,subject,text,html){
   const cfg=misc.smtp||{};
-  if(cfg.pass&&String(cfg.pass).startsWith('SG.'))return sendViaSendGrid(to,subject,text);
+  if(cfg.pass&&String(cfg.pass).startsWith('SG.'))return sendViaSendGrid(to,subject,text,html);
   return new Promise((resolve,reject)=>{
     if(!cfg.host||!cfg.user)return reject(new Error('Email service not configured'));
     let sock;
@@ -173,8 +278,14 @@ function sendMail(to,subject,text){
       {expect:235,send:`MAIL FROM:<${from}>`},
       {expect:250,send:`RCPT TO:<${to}>`},
       {expect:250,send:'DATA'},
-      {expect:354,send:[`From: KARN <${from}>`,`To: <${to}>`,`Subject: ${subject}`,
-        'MIME-Version: 1.0','Content-Type: text/plain; charset=utf-8','',text,'.'].join('\r\n')},
+      {expect:354,send:(html?[
+        `From: KARN <${from}>`,`To: <${to}>`,`Subject: ${subject}`,
+        'MIME-Version: 1.0','Content-Type: multipart/alternative; boundary="k4rnB0und"','',
+        '--k4rnB0und','Content-Type: text/plain; charset=utf-8','',text,'',
+        '--k4rnB0und','Content-Type: text/html; charset=utf-8','',html,'',
+        '--k4rnB0und--','.']
+       :[`From: KARN <${from}>`,`To: <${to}>`,`Subject: ${subject}`,
+        'MIME-Version: 1.0','Content-Type: text/plain; charset=utf-8','',text,'.']).join('\r\n')},
       {expect:250,send:'QUIT'},
       {expect:221,send:null}
     ];
@@ -266,18 +377,61 @@ function vaultRedact(entries){
 function notifyAdmins(text){
   for(const u in users)if(users[u].admin)addNotif(u,{type:'info',text});
 }
-/* ---- outbound user email (professional template + delivery log) ---- */
+/* ---- outbound email: branded HTML + plaintext fallback ---- */
 const mailLog=[];
-function mailTemplate(title,name,body,footer){
-  return['KARN — BATTLEFIELD COMMAND','═'.repeat(46),'',title.toUpperCase(),'',
-    `Hi ${name},`,'',body,'','─'.repeat(46),
+let PUBLIC_BASE='';                       /* learned from incoming requests */
+function mailTemplate(title,name,body,footer,extras){
+  const x=extras||{};
+  const lines=['KARN — BATTLEFIELD COMMAND','═'.repeat(46),'',title.toUpperCase(),'',
+    `Hi ${name},`,'',body];
+  if(x.code)lines.push('','    ┌──────────────────┐',`    │   ${x.code}   │`,'    └──────────────────┘');
+  if(x.link)lines.push('',`${x.link.label}:`,`    ${x.link.url}`);
+  lines.push('','─'.repeat(46),
     footer||'This is an automated message from your KARN game server.',
-    'Please do not reply directly to this email.'].join('\n');
+    'Please do not reply directly to this email.');
+  return lines.join('\n');
 }
-function sendUserMail(u,subject,title,body,footer){
+function esc(t){return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+function mailHTML(title,name,body,footer,extras){
+  const x=extras||{};
+  const logo=PUBLIC_BASE?`<img src="${PUBLIC_BASE}/logo.jpg" alt="KARN — Battlefield Command" width="600" style="display:block;width:100%;max-width:600px;border-radius:12px 12px 0 0"/>`
+    :`<div style="padding:34px 20px 26px;text-align:center;background:#0d1a14;border-radius:12px 12px 0 0">
+        <div style="font-family:Georgia,serif;font-size:40px;letter-spacing:14px;color:#dfb257;font-weight:bold">KARN</div>
+        <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;letter-spacing:6px;color:#9fb3a6;margin-top:4px">BATTLEFIELD&nbsp;COMMAND</div></div>`;
+  const codeBox=x.code?`
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:18px 0 6px">
+      <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border:2px dashed #dfb257;border-radius:12px;background:#0d1a14;padding:16px 34px;font-family:'Courier New',monospace;font-size:30px;letter-spacing:8px;color:#f2d489;font-weight:bold">${esc(x.code)}</td></tr></table>
+      <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#8aa294;padding-top:8px">One-time code · expires in 30 minutes</div>
+    </td></tr></table>`:'';
+  const button=x.link?`
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:16px 0 6px">
+      <a href="${x.link.url}" style="display:inline-block;background:#dfb257;color:#221a05;font-family:Helvetica,Arial,sans-serif;font-size:14px;font-weight:bold;text-decoration:none;padding:13px 34px;border-radius:9px">${esc(x.link.label)}</a>
+      <div style="font-family:Helvetica,Arial,sans-serif;font-size:10.5px;color:#5d7568;padding-top:10px;word-break:break-all">or copy this link: ${esc(x.link.url)}</div>
+    </td></tr></table>`:'';
+  const paras=String(body).split(/\n{2,}/).map(p=>
+    `<p style="margin:0 0 14px;font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.7;color:#cfe0d5;white-space:pre-line">${p}</p>`).join('');
+  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#080f0b">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#080f0b"><tr><td align="center" style="padding:28px 12px">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+      <tr><td>${logo}</td></tr>
+      <tr><td style="background:#131e1a;border:1px solid #28382f;border-top:none;border-radius:0 0 12px 12px;padding:30px 34px">
+        <div style="font-family:Georgia,serif;font-size:21px;color:#dfb257;padding-bottom:6px">${esc(title)}</div>
+        <div style="border-bottom:1px solid #28382f;margin-bottom:18px"></div>
+        <p style="margin:0 0 14px;font-family:Helvetica,Arial,sans-serif;font-size:14px;color:#cfe0d5">Hi <b>${esc(name)}</b>,</p>
+        ${paras}${codeBox}${button}
+      </td></tr>
+      <tr><td style="padding:18px 10px;text-align:center">
+        <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#5d7568;line-height:1.6">
+          ${esc(footer||'This is an automated message from your KARN game server.')}<br>
+          Please do not reply directly to this email.</div>
+      </td></tr>
+    </table>
+  </td></tr></table></body></html>`;
+}
+function sendUserMail(u,subject,title,body,footer,extras){
   const x=users[u];
   if(!x||!x.email||!misc.smtp||!misc.smtp.host)return;
-  sendMail(x.email,subject,mailTemplate(title,u,body,footer))
+  sendMail(x.email,subject,mailTemplate(title,u,body,footer,extras),mailHTML(title,u,body,footer,extras))
     .then(()=>{mailLog.unshift({to:maskEmail(x.email),subject,ok:true,ts:Date.now()});
       if(mailLog.length>25)mailLog.length=25;
       console.log('mail sent:',subject,'->',maskEmail(x.email));})
@@ -487,6 +641,14 @@ try{
   const ip=(TRUST_PROXY&&String(req.headers['x-forwarded-for']||'').split(',')[0].trim())
     ||req.socket.remoteAddress||'?';
   if(!rate(ip+':api',150,5000))return bad(res,'Too many requests — slow down',429);
+  if(req.headers.host)PUBLIC_BASE=(typeof IS_TLS!=='undefined'&&IS_TLS?'https':'http')+'://'+req.headers.host;
+  if(req.method==='GET'&&p==='/logo.jpg'){
+    try{
+      const img=fs.readFileSync(path.join(DIR,'karn-logo.jpg'));
+      res.writeHead(200,{'Content-Type':'image/jpeg','Cache-Control':'public, max-age=86400',...SEC_HEADERS});
+      return res.end(img);
+    }catch(e){res.writeHead(404,SEC_HEADERS);return res.end('no logo');}
+  }
   if(req.method==='GET'&&(p==='/'||p==='/karn.html')){
     let html;
     try{html=fs.readFileSync(GAME);}catch(e){return bad(res,'karn.html not found next to server.js',500);}
@@ -600,37 +762,16 @@ try{
     saveS();
     notifyAdmins(`🛟 Support ticket #${tk.id} from ${t}: "${msg.slice(0,60)}${msg.length>60?'…':''}"`);
     const em=users[t].email;
-    if(em&&misc.smtp&&misc.smtp.host){
-      const code=crypto.randomBytes(4).toString('hex').toUpperCase();
-      misc.recov[code]={user:t,by:'auto-email',exp:Date.now()+30*60e3};saveS();
-      try{
-        await sendMail(em,`[KARN Support] Ticket #${tk.id} — we're on it`,
-`Hi ${t},
-
-We received your support request and opened ticket #${tk.id}.
-
-Your message:
-${msg.split('\n').map(l=>'  '+l).join('\n')}
-
-Follow the conversation and reply here — NO LOGIN NEEDED (works even if
-you're locked out or suspended):
-
-    ${ticketLink(tk,req)}
-
-If this is about a lost password, you can also use this one-time recovery
-code (30 minutes, single use) via "Account recovery" on the login screen:
-
-    ${code}
-
-The staff team will get back to you on the ticket.`);
-        console.log('support ticket #'+tk.id,'emailed to',maskEmail(em));
-        return json(res,200,{ok:1,emailed:true,hint:maskEmail(em),ticket:tk.id});
-      }catch(e){
-        delete misc.recov[code];saveS();
-        console.error('support email failed:',e.message);
-      }
-    }
-    return json(res,200,{ok:1,emailed:false,ticket:tk.id});
+    const willEmail=!!(em&&misc.smtp&&misc.smtp.host);
+    if(willEmail)
+      sendUserMail(t,`[KARN Support] Ticket #${tk.id} — we're on it`,
+        `Ticket #${tk.id} opened`,
+        `We received your support request and opened a ticket for you.\n\nYour message:\n"${msg.slice(0,400)}"\n\nOur automated assistant is looking at it right now — you'll usually get a reply within seconds. Use the button below to follow the conversation and respond. It works even if you're locked out or suspended, no login needed.`,
+        'Reply "human" on the ticket at any time to reach a real staff member.',
+        {link:{label:'Open your ticket',url:ticketLink(tk,req)}});
+    /* the assistant triages it immediately */
+    agentHandle(tk,msg,req);
+    return json(res,200,{ok:1,emailed:willEmail,hint:willEmail?maskEmail(em):undefined,ticket:tk.id});
   }
   /* ----- guest ticket access via emailed link (no login) ----- */
   if(p==='/api/tickets/guest'&&req.method==='POST'){
@@ -652,7 +793,9 @@ The staff team will get back to you on the ticket.`);
     if(users[tk.from])
       addNotif(tk.from,{type:'ticket',from:tk.to,data:{tid:tk.id},
         text:`${tk.to} replied to ticket #${tk.id} ("${tk.subject}")`});
-    else notifyAdmins(`${tk.to} replied to ticket #${tk.id} ("${tk.subject}")`);
+    else if(tk.human||tk.from!=='support')
+      notifyAdmins(`${tk.to} replied to ticket #${tk.id} ("${tk.subject}")`);
+    agentHandle(tk,text,req);     /* the assistant follows up */
     return json(res,200,{ok:1,ticket:tk});
   }
 
@@ -978,8 +1121,10 @@ The staff team will get back to you on the ticket.`);
     if(!tk.messages)tk.messages=[{by:tk.from,text:tk.body||'',ts:tk.ts}]; /* safety migration */
     if(tk.messages.length>=50)return bad(res,'Ticket thread is full');
     tk.messages.push({by:me,text,ts:Date.now()});
+    if(STAFF&&me!==tk.to&&tk.from==='support')tk.human=true;  /* a person took over — bot steps aside */
     saveS();
     if(me===tk.to){
+      agentHandle(tk,text,req);   /* assistant follows up on the user's reply */
       /* player replied -> tell the staff member (or admins if they're gone) */
       if(users[tk.from])
         addNotif(tk.from,{type:'ticket',from:me,data:{tid:tk.id},
@@ -1075,11 +1220,12 @@ The staff team will get back to you on the ticket.`);
       if(!t)return bad(res,'No such player');
       const em=users[t].email;
       if(!em)return bad(res,'That player has no recovery email linked');
-      const code=crypto.randomBytes(4).toString('hex').toUpperCase();
-      misc.recov[code]={user:t,by:me,exp:Date.now()+30*60e3};saveS();
+      const code=makeRecovery(t,me);
       try{
-        await sendMail(em,'KARN account recovery code',
-          `Hi ${t},\n\nAn admin sent you a recovery code:\n\n    ${code}\n\nUse "Account recovery" on the login screen. Expires in 30 minutes.`);
+        const bodyTxt=`An admin sent you an account recovery code. Use it via "Account recovery" on the login screen to set a new password or username.`;
+        await sendMail(em,'[KARN] Account recovery code',
+          mailTemplate('Account recovery',t,bodyTxt,null,{code}),
+          mailHTML('Account recovery',t,bodyTxt,null,{code}));
       }catch(e){delete misc.recov[code];saveS();return bad(res,'Email failed: '+e.message);}
       for(const s2 of misc.support)if(s2.user===t)s2.done=true;
       saveS();

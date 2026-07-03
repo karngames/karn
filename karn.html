@@ -2086,6 +2086,7 @@ function showAuth(){
   const a=document.getElementById('auth');
   a.classList.remove('hidden');
   a.innerHTML=`<div class="authcard">
+    <img src="/logo.jpg" alt="" style="display:block;width:100%;border-radius:12px;margin-bottom:14px" onerror="this.style.display='none'">
     <div class="authlogo">KARN</div>
     <div class="authsub">BATTLEFIELD&nbsp;COMMAND</div>
     <input id="inUser" class="txt" placeholder="Username" maxlength="16" spellcheck="false"
@@ -2110,7 +2111,7 @@ function showSupport(){
   a.innerHTML=`<div class="authcard">
     <div class="authlogo">KARN</div>
     <div class="authsub">SUPPORT</div>
-    <div class="hint" style="margin-bottom:4px">Lost password, ban appeal, anything else — this opens a <b>support ticket</b> with the staff team. If you linked a recovery email you get a link to follow the conversation (no login needed) plus a recovery code.</div>
+    <div class="hint" style="margin-bottom:4px">Lost password, ban appeal, anything else — this opens a <b>support ticket</b>. Our automated assistant replies in seconds and can email recovery codes instantly; say "human" any time to reach real staff. With a linked email you get a conversation link that needs no login.</div>
     <input id="inSup" class="txt" placeholder="Username" maxlength="16" spellcheck="false">
     <textarea id="inSupMsg" class="txt" rows="3" style="resize:vertical" placeholder="What do you need help with?"></textarea>
     <div id="netErr" style="font-size:12.5px;min-height:34px;margin-top:8px;color:var(--bad)"></div>
@@ -2161,6 +2162,7 @@ function showGuestTicket(key){
         ?`<textarea id="gtReply" class="txt" rows="2" style="resize:vertical" placeholder="Write a reply…"></textarea>
           <div id="netErr" style="font-size:12px;min-height:16px;margin-top:6px;color:var(--bad)"></div>
           <div class="row"><button class="btn gold grow" onclick="guestReply('${key}')">↩ Reply</button>
+            ${(t.from==='support'&&!t.human)?`<button class="btn" title="Hand this to a real staff member" onclick="document.getElementById('gtReply').value='human';guestReply('${key}')">🙋 Human</button>`:''}
             <button class="btn" onclick="showAuth()">Log in</button></div>`
         :`<div class="hint" style="margin:10px 0">This ticket has been closed by the staff team.</div>
           <div class="row"><button class="btn gold grow" onclick="showAuth()">Go to login</button></div>`}
@@ -2864,6 +2866,7 @@ function viewTicket(tid){
           <div style="height:10px"></div>
           <div class="row">
             <button class="btn gold" onclick="ticketReply(${t.id})">↩ Reply</button>
+            ${(!staff&&t.from==='support'&&!t.human)?`<button class="btn" title="Hand this to a real staff member" onclick="document.getElementById('tkReply').value='human';ticketReply(${t.id})">🙋 Human</button>`:''}
             ${staff?`<button class="btn" onclick="api('/api/staff/ticket/close',{id:${t.id}}).then(()=>{toast('Ticket closed');viewTicket(${t.id});if(SITE.page==='staff')renderPage();})">✓ Close</button>
             <button class="btn" title="View this player — ban/unban from the admin panel" onclick="closeModal();viewUser('${t.to}')">👤 ${t.to}</button>`:''}
             <span class="grow"></span><button class="btn" onclick="closeModal()">Done</button></div>`
