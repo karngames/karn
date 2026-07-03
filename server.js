@@ -29,6 +29,23 @@ let metrics=readJSON(DBX)||{firstStart:Date.now(),registrations:0,logins:0,games
 const DBS=path.join(DATA,'misc.json');
 let misc=readJSON(DBS)||{feedback:[],recov:{},fseq:1};
 misc.support=misc.support||[];misc.smtp=misc.smtp||null;misc.tickets=misc.tickets||[];
+/* per-DEVICE account tracking — deliberately not per network/IP so families
+   sharing wifi are never affected. Max 5 accounts per device; banning a
+   player can also block their device from creating new accounts.          */
+misc.devices=misc.devices||{};
+const DEV_LIMIT=5;
+function devOf(req){
+  const d=String(req.headers['x-dev']||'').toLowerCase();
+  return /^[a-f0-9]{16,40}$/.test(d)?d:null;
+}
+function devTouch(dev,user){
+  if(!dev)return null;
+  const keys=Object.keys(misc.devices);
+  if(!misc.devices[dev]&&keys.length>2000)delete misc.devices[keys[0]];
+  const D=misc.devices[dev]=misc.devices[dev]||{users:[],banned:false,bannedFor:[],ts:Date.now()};
+  if(user&&!D.users.includes(user)){D.users.push(user);saveS();}
+  return D;
+}
 misc.balance=misc.balance||null;misc.balV=misc.balV||0;
 misc.pages=misc.pages||{custom:[],extends:{}};
 function sanitizePages(pg){
@@ -123,6 +140,22 @@ function agentEscalate(tk,why){
   tk.human=true;saveS();
   notifyAdmins(`🙋 Ticket #${tk.id} (${tk.to}) needs a HUMAN: ${why}`);
 }
+/* --- knowledge base for instant gameplay answers --- */
+const KB=[
+ [/snip/i,'Snipers mount only on Light hulls (1 slot) and slow them to speed 1. They fire down the single line they face: range 4 for −1 HP, and they shoot PAST other tanks — only walls stop them. They also do +1 damage to Heavies. At Level 2 they upgrade to Double Snipers: range 5, −2 HP.'],
+ [/dirt/i,'The Dirt Gun is a Level 2, Heavy-only weapon (2 slots). Range 1 but ALL 8 squares around the tank — including behind. It hits for −4 HP dead ahead (one-shots most tanks) and −1 everywhere else.'],
+ [/big gun/i,'The Big Gun costs 2 slots: 180° front arc, range 2, −2 HP per hit — the go-to weapon for cracking armoured tanks.'],
+ [/small gun/i,'The Small Gun costs 1 slot: 180° front arc, range 1, −1 HP. Cheap — which leaves room for armour.'],
+ [/armou?r/i,'Armour costs 1 slot and adds +1 HP, stacking. It shows as rings on the hull. Watch out: snipers do +1 damage to Heavies, armoured or not.'],
+ [/boost|speed/i,'The Speed Boost unlocks at Level 2: +1 speed for 1 slot, on Medium and Heavy hulls only (never Lights). Gold chevrons on the hull.'],
+ [/level ?2/i,'You reach Level 2 the first time one of your pieces touches the enemy back rank. It unlocks Double Snipers, the Dirt Gun, and Speed Boosts — fitted by refitting a piece while it sits on your own back rank (refits are free).'],
+ [/wall|setup|deploy/i,'Setup: 6 shared centre walls (pick 3 columns; the other row is the same or mirrored — 112 legal layouts), then each side places 4 walls in their first three rows (never the back rank) and deploys 8 tanks, max 4 per class.'],
+ [/elo|rating|rank/i,'Ratings start at 1000 and move with each match (K-factor 32 by default — beating a stronger player earns more). The queue matches you within 150 Elo instantly, widening to anyone after 10 seconds.'],
+ [/draw|resign/i,'During an online match use the 🤝 button to offer a draw (your opponent can accept or decline) and 🏳 to resign — with a confirmation so no accidents.'],
+ [/refit|workshop|armoury|loadout/i,'A tank can be refitted — guns, armour, boost swapped freely — only while it sits on YOUR back rank. Refits are free and instant; drive off the rank and the loadout is locked in.'],
+ [/replay|review/i,'Every finished online match is saved. Open it from a profile and hit Review — the engine grades every move (best / good / inaccuracy / mistake / blunder) and shows what it would have played.'],
+ [/win|goal|objective/i,'Two ways to win: destroy every enemy piece, or hold BOTH gold ◇ squares in the middle of the enemy back rank with two of your tanks at once.'],
+];
 function agentHandle(tk,msg,req){
   if(tk.from!=='support'||tk.human||tk.status!=='open')return;
   if((tk.botReplies||0)>=6){
@@ -132,54 +165,81 @@ function agentHandle(tk,msg,req){
   }
   const m=String(msg||'').toLowerCase();
   const u=users[tk.to];
-  const has=(...ws)=>ws.some(w=>m.includes(w));
-  /* explicit request for a person always wins */
-  if(has('human','person','real staff','speak to someone','agent','admin please','talk to staff')){
+  const st=tk.agent=tk.agent||{codes:0};
+  const has=re=>re.test(m);
+  /* ---- multi-intent detection ---- */
+  const wantHuman=has(/\b(human|person|real staff|agent|someone real|speak to (a )?(person|staff|admin)|talk to (a )?(person|staff|admin))\b/);
+  const thanks=has(/\b(thanks|thank you|solved|fixed|sorted|works now|all good|resolved)\b/);
+  const iBan=has(/\b(ban|banned|unban|suspend|suspension|appeal)\b/);
+  const iPass=has(/\b(password|passw|log ?in|locked|forgot|sign ?in|can'?t get in|cant get in)\b/);
+  const iName=has(/\b(username|user name|rename|change (my )?name)\b/);
+  const iBug=has(/\b(bug|error|broken|glitch|crash|freez|stuck|not work|lag)\b/);
+  const iCheat=has(/\b(cheat|cheater|hack|exploit|report (a |this )?player|abusive|harass)\b/);
+  const iDelete=has(/\b(delete|remove|close) (my )?account\b/);
+  const angry=has(/\b(ridiculous|unfair|furious|angry|scam|terrible|awful|joke)\b/)||/!{2,}/.test(m);
+  const kbHit=KB.find(([re])=>re.test(m));
+  const isQuestion=/\bhow|what|why|when|where|does|can i|\?/.test(m);
+  const anyIssue=iBan||iPass||iName||iBug||iCheat||iDelete;
+  /* explicit human request always wins */
+  if(wantHuman){
     agentEscalate(tk,'user requested a human');
     agentSay(tk,`Of course — I've flagged this ticket for the staff team and stepped aside. A real person will reply here as soon as they're available. Everything you've written above is already with them, so there's no need to repeat yourself.`,req);
     return;
   }
-  if(has('thank','solved','fixed','works now','all good','resolved','sorted')){
+  if(thanks&&!anyIssue){
     tk.status='closed';tk.closedBy=BOT;saveS();
     if(users[tk.to])addNotif(tk.to,{type:'info',text:`Ticket #${tk.id} closed — glad it's sorted!`});
     agentSayClosed(tk,req);
     return;
   }
-  if(has('ban','banned','unban','suspend','appeal')){
+  /* ---- compose one reply that covers everything detected ---- */
+  const parts=[];const extras={};
+  if(angry)parts.push(`I can hear this has been frustrating — sorry about that. Let's get it fixed.`);
+  if(iBan){
     agentEscalate(tk,'ban appeal — only the admin can lift bans');
-    agentSay(tk,`I understand you'd like your suspension reviewed. Account bans can only be lifted by the server administrator, so I've escalated your appeal to them directly with everything you've written here.\n\nWhat happens next: the admin reviews the ban reason and your message, then replies on this ticket. You'll get an email the moment they do.`,req);
-    return;
+    parts.push(`About the suspension: account bans can only be lifted by the server administrator, so I've escalated your appeal to them directly with everything you've written here. They'll reply on this ticket, and you'll get an email the moment they do.`);
   }
-  if(has('password','log in','login','locked','forgot','cant get in',"can't get in",'sign in')){
-    if(u&&u.email&&misc.smtp&&misc.smtp.host){
-      const code=makeRecovery(tk.to);
-      agentSay(tk,`No problem — I've generated a fresh recovery code for you (it's in the box below and works once, for 30 minutes).\n\nHow to use it:\n1. Open the KARN site and click "Account recovery" on the login screen\n2. Enter the code\n3. Choose a new password — and a new username too, if you want one\n\nIf the code expires before you use it, just reply here and I'll send another.`,req,{code});
+  if(iCheat){
+    agentEscalate(tk,'player report: "'+String(msg).slice(0,80)+'"');
+    const accused=Object.keys(users).find(n=>n.toLowerCase()!==tk.to.toLowerCase()&&m.includes(n.toLowerCase()));
+    if(accused&&users[accused]){
+      users[accused].flagged={by:BOT,note:'reported in ticket #'+tk.id+' by '+tk.to,ts:Date.now()};saveU();
+      parts.push(`Thanks for the report about ${accused} — I've flagged their account for admin review and passed along your exact words. The admin will look at their match history and take it from there.`);
     }else{
-      agentEscalate(tk,'password reset needed but no recovery email is linked');
-      agentSay(tk,`I'd love to email you a recovery code, but this account has no recovery email linked${misc.smtp&&misc.smtp.host?'':' (or the email service is offline)'} — so I've asked the staff team to generate one for you manually. They'll post it on this ticket shortly.`,req);
+      parts.push(`Thanks for the report — I've escalated it to the admin with your exact words. If you can, reply with the player's exact username so they can pull the right match history.`);
     }
-    return;
   }
-  if(has('username','rename','change my name','name change')){
+  if(iPass||iName){
+    const what=iPass&&iName?'reset your password and change your username':iPass?'reset your password':'change your username';
     if(u&&u.email&&misc.smtp&&misc.smtp.host){
-      const code=makeRecovery(tk.to);
-      agentSay(tk,`Happy to help with a name change! The recovery code below lets you pick a new username (and password) yourself:\n\n1. Open the KARN site → "Account recovery" on the login screen\n2. Enter the code\n3. Type your new username in the optional field and set a password\n\nAll your Elo, friends and match history follow the new name automatically.`,req,{code});
+      extras.code=makeRecovery(tk.to);
+      st.codes++;
+      parts.push((st.codes>1?`Here's a fresh code (that's number ${st.codes} — if these aren't reaching you, check your spam folder, or reply "human"). `:``)+
+        `To ${what}: open the KARN site, click "Account recovery" on the login screen, enter the code below, then set a new password${iName?' and type your new username in the optional field':''}. The code works once and expires in 30 minutes.`);
     }else{
-      agentEscalate(tk,'rename requested — needs staff (no recovery email linked)');
-      agentSay(tk,`Name changes are done through account recovery, but there's no recovery email linked to this account — I've asked the staff team to sort you out with a manual code.`,req);
+      agentEscalate(tk,'account recovery needed but no recovery email is linked');
+      parts.push(`To ${what} I'd normally email you a recovery code, but this account has no recovery email linked${misc.smtp&&misc.smtp.host?'':' (or the email service is offline)'} — so I've asked the staff team to generate one manually. They'll post it right here.`);
     }
-    return;
   }
-  if(has('bug','error','broken','glitch','crash','not working','stuck')){
+  if(iBug){
     misc.feedback.unshift({id:misc.fseq++,from:tk.to,text:'[via support ticket #'+tk.id+'] '+String(msg).slice(0,900),ts:Date.now()});
     if(misc.feedback.length>200)misc.feedback.length=200;
     saveS();
     notifyAdmins(`🐛 Bug report from ticket #${tk.id} (${tk.to}) filed to the feedback inbox`);
-    agentSay(tk,`Thanks for the report — I've filed it straight into the admin's inbox with your exact description, so nothing gets lost.\n\nIf you can, reply with anything that helps reproduce it (what you clicked, what you expected, what happened instead). If you'd rather talk it through with a person, just reply "human".`,req);
-    return;
+    parts.push(`I've filed your bug report word-for-word in the admin's inbox so nothing gets lost. Anything that helps reproduce it (what you clicked, what you expected, what happened) — just reply here and I'll attach it.`);
   }
-  /* default: friendly triage */
-  agentSay(tk,`Thanks for getting in touch — I'm the automated KARN assistant and I handle most requests instantly. Here's what I can do right away:\n\n• "I forgot my password" — I'll email you a recovery code\n• "I want to change my username" — recovery code for that too\n• "I've been banned" — I'll escalate your appeal to the admin\n• "I found a bug" — I'll file it in the admin's inbox\n\nJust reply describing your problem — or reply "human" and I'll hand you straight to the staff team.`,req);
+  if(iDelete){
+    agentEscalate(tk,'account deletion request');
+    parts.push(`Account deletion has to be done by the administrator — I've passed your request straight to them. They'll confirm on this ticket before anything is removed.`);
+  }
+  if(!anyIssue&&kbHit&&isQuestion){
+    parts.push(kbHit[1]);
+    parts.push(`Anything else you'd like to know? The 📖 Rules page in the game covers everything with live diagrams — or reply "human" for a real person.`);
+  }
+  if(!parts.length){
+    parts.push(`Thanks for getting in touch — I'm the automated KARN assistant and I resolve most requests instantly. You wrote: "${String(msg).slice(0,120)}" — could you tell me a little more?\n\nHere's what I can do right away:\n• "I forgot my password" — I'll email you a recovery code\n• "I want to change my username" — recovery code for that too\n• "I've been banned" — I'll escalate your appeal to the admin\n• "I found a bug" or "report a player" — filed straight to the admin\n• Any rules question — instant answer\n\nOr reply "human" and I'll hand you to the staff team.`);
+  }
+  agentSay(tk,parts.join('\n\n'),req,extras);
 }
 function agentSayClosed(tk,req){
   if(users[tk.to])
@@ -392,9 +452,11 @@ function mailTemplate(title,name,body,footer,extras){
   return lines.join('\n');
 }
 function esc(t){return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+function logoExists(){try{return fs.statSync(path.join(DIR,'karn-logo.jpg')).size>2048;}catch(e){return false;}}
 function mailHTML(title,name,body,footer,extras){
   const x=extras||{};
-  const logo=PUBLIC_BASE?`<img src="${PUBLIC_BASE}/logo.jpg" alt="KARN — Battlefield Command" width="600" style="display:block;width:100%;max-width:600px;border-radius:12px 12px 0 0"/>`
+  /* big square logos are cropped to a centered banner via background-cover */
+  const logo=(PUBLIC_BASE&&logoExists())?`<div style="height:190px;background:url('${PUBLIC_BASE}/logo.jpg') center center/cover no-repeat #0d1a14;border-radius:12px 12px 0 0;font-size:0">&nbsp;</div>`
     :`<div style="padding:34px 20px 26px;text-align:center;background:#0d1a14;border-radius:12px 12px 0 0">
         <div style="font-family:Georgia,serif;font-size:40px;letter-spacing:14px;color:#dfb257;font-weight:bold">KARN</div>
         <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;letter-spacing:6px;color:#9fb3a6;margin-top:4px">BATTLEFIELD&nbsp;COMMAND</div></div>`;
@@ -644,8 +706,9 @@ try{
   if(req.headers.host)PUBLIC_BASE=(typeof IS_TLS!=='undefined'&&IS_TLS?'https':'http')+'://'+req.headers.host;
   if(req.method==='GET'&&p==='/logo.jpg'){
     try{
+      if(!logoExists())throw 0;
       const img=fs.readFileSync(path.join(DIR,'karn-logo.jpg'));
-      res.writeHead(200,{'Content-Type':'image/jpeg','Cache-Control':'public, max-age=86400',...SEC_HEADERS});
+      res.writeHead(200,{'Content-Type':'image/jpeg','Cache-Control':'public, max-age=3600',...SEC_HEADERS});
       return res.end(img);
     }catch(e){res.writeHead(404,SEC_HEADERS);return res.end('no logo');}
   }
@@ -674,6 +737,12 @@ try{
     if(pw.length<6)return bad(res,'Password must be at least 6 characters');
     if(findUser(u))return bad(res,'That username is taken');
     if(Object.keys(users).length>=2000)return bad(res,'Server is full');
+    const dev=devOf(req);
+    if(dev){
+      const D=devTouch(dev);
+      if(D.banned)return bad(res,'Account creation is blocked on this device. Contact Support if you believe this is a mistake.',403);
+      if(D.users.filter(n=>users[n]).length>=DEV_LIMIT)return bad(res,'This device has reached the limit of '+DEV_LIMIT+' accounts',403);
+    }
     const first=Object.keys(users).length===0||ADMIN_NAMES.includes(u.toLowerCase());
     const{salt,hash}=hashPass(pw);
     users[u]={salt,hash,elo:1000,wins:0,losses:0,draws:0,games:0,created:Date.now(),
@@ -682,6 +751,7 @@ try{
       friends:[],reqIn:[],reqOut:[],blocked:[],notifs:[],matches:[]};
     if(first)addNotif(u,{type:'info',text:'You are the ADMIN of this server — the Admin page is in your side menu.'});
     metrics.registrations++;saveX();saveU();
+    devTouch(dev,u);
     const t=newToken();sessions[t]={user:u,exp:Date.now()+SESS_TTL};
     console.log('new account:',u,first?'(ADMIN)':'');
     return json(res,200,{token:t,profile:pub(u)});
@@ -714,6 +784,7 @@ try{
     }
     delete lockouts[u];
     if(x.banned)return bad(res,'This account has been banned'+(x.banned.reason?': '+x.banned.reason:''),403);
+    devTouch(devOf(req),u);   /* remember which devices this account uses */
     const t=newToken();sessions[t]={user:u,exp:Date.now()+SESS_TTL};
     metrics.logins++;saveX();
     return json(res,200,{token:t,profile:pub(u)});
@@ -1337,6 +1408,20 @@ try{
       if(!t)return bad(res,'No such player');
       if(users[t].admin)return bad(res,'Cannot ban an admin');
       users[t].banned={by:me,reason:String(body.reason||'').slice(0,140),ts:Date.now()};
+      if(body.banDevice!==false){   /* block their device(s) from making new accounts */
+        let n=0;
+        for(const id in misc.devices){
+          const D=misc.devices[id];
+          if(D.users.includes(t)){
+            D.banned=true;
+            D.bannedFor=D.bannedFor||[];
+            if(!D.bannedFor.includes(t))D.bannedFor.push(t);
+            n++;
+          }
+        }
+        if(n)console.log('device ban:',n,'device(s) of',t,'blocked from new accounts');
+        saveS();
+      }
       sendUserMail(t,'[KARN] Your account has been suspended','Account suspended',
         `Your KARN account "${t}" has been suspended by the server administrator.\n\n`+
         (body.reason?`Reason given:\n    ${String(body.reason).slice(0,140)}\n\n`:'')+
@@ -1354,6 +1439,14 @@ try{
       const t=findUser(body.user);
       if(!t)return bad(res,'No such player');
       users[t].banned=null;saveU();
+      for(const id in misc.devices){   /* lift matching device blocks */
+        const D=misc.devices[id];
+        if(D.bannedFor&&D.bannedFor.includes(t)){
+          D.bannedFor=D.bannedFor.filter(n=>n!==t);
+          if(!D.bannedFor.length)D.banned=false;
+        }
+      }
+      saveS();
       return json(res,200,{ok:1});
     }
     if(p==='/api/admin/untag'&&req.method==='POST'){

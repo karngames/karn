@@ -1715,13 +1715,25 @@ try{
   if(s.token){NET.token=s.token;NET.user=s.user;NET.server=s.server||'';}
 }catch(e){}
 function netSave(){try{localStorage.setItem('karnNet',JSON.stringify({token:NET.token,user:NET.user,server:NET.server}));}catch(e){}}
+/* persistent per-device id — used to limit account creation per DEVICE
+   (deliberately not per network, so family on the same wifi are unaffected) */
+NET.dev=(function(){
+  try{
+    let d=localStorage.getItem('karnDev');
+    if(!d||!/^[a-f0-9]{16,40}$/.test(d)){
+      d='';for(let i=0;i<24;i++)d+='0123456789abcdef'[Math.floor(Math.random()*16)];
+      localStorage.setItem('karnDev',d);
+    }
+    return d;
+  }catch(e){return'';}
+})();
 function srvDefault(){
   return NET.server||(location.protocol.startsWith('http')?location.origin:'http://localhost:8081');
 }
 async function api(pth,body){
   const r=await fetch(NET.server+pth,{
     method:body!==undefined?'POST':'GET',
-    headers:{'Content-Type':'application/json','X-Token':NET.token||''},
+    headers:{'Content-Type':'application/json','X-Token':NET.token||'','X-Dev':NET.dev||''},
     body:body!==undefined?JSON.stringify(body):undefined});
   let j=null;try{j=await r.json();}catch(e){}
   if(!r.ok)throw new Error(j&&j.error?j.error:'HTTP '+r.status);
@@ -2086,7 +2098,7 @@ function showAuth(){
   const a=document.getElementById('auth');
   a.classList.remove('hidden');
   a.innerHTML=`<div class="authcard">
-    <img src="/logo.jpg" alt="" style="display:block;width:100%;border-radius:12px;margin-bottom:14px" onerror="this.style.display='none'">
+    <img src="/logo.jpg" alt="" style="display:block;width:100%;height:110px;object-fit:cover;object-position:center;border-radius:12px;margin-bottom:14px" onerror="this.remove()">
     <div class="authlogo">KARN</div>
     <div class="authsub">BATTLEFIELD&nbsp;COMMAND</div>
     <input id="inUser" class="txt" placeholder="Username" maxlength="16" spellcheck="false"
@@ -3221,8 +3233,11 @@ function admBan(u){
   showModal(`<h2 style="font-size:19px">🚫 Ban "${u}"?</h2>
     <div class="sub">They will be logged out immediately and unable to log in. You can unban later.</div>
     <input id="banReason" class="txt" placeholder="Reason (shown to them at login)" maxlength="140">
+    <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:12.5px;color:var(--dim);cursor:pointer">
+      <input id="banDev" type="checkbox" checked style="margin-top:2px">
+      <span>Also block <b>their device</b> from creating new accounts. This targets only the device they used — family members on the same wifi are unaffected.</span></label>
     <div style="height:14px"></div>
-    <div class="row"><button class="btn danger" onclick="api('/api/admin/ban',{user:'${u}',reason:document.getElementById('banReason').value}).then(()=>{closeModal();toast('Banned');renderPage();}).catch(e=>toast(e.message))">🚫 Ban player</button>
+    <div class="row"><button class="btn danger" onclick="api('/api/admin/ban',{user:'${u}',reason:document.getElementById('banReason').value,banDevice:document.getElementById('banDev').checked}).then(()=>{closeModal();toast('Banned');renderPage();}).catch(e=>toast(e.message))">🚫 Ban player</button>
     <button class="btn" onclick="closeModal()">Cancel</button></div>`,true);
 }
 function admEdit(u,elo){
