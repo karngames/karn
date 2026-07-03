@@ -1073,7 +1073,11 @@ try{
   if(p==='/api/lobby'){
     /* privacy: only the TOP 10 are visible — nobody can scout the full player list */
     const players=Object.keys(users).filter(u=>!users[u].banned).map(pub).sort((a,b)=>b.elo-a.elo).slice(0,10);
-    const open=Object.values(matches).filter(m=>m.status==='open'&&!isBlocked(m.host,me))
+    /* privacy at scale: a hosted match is an invitation to YOUR circle, not a
+       public broadcast — only the host and the host's friends see it listed.
+       Strangers meet through the matchmaking queue instead. */
+    const open=Object.values(matches).filter(m=>m.status==='open'&&!isBlocked(m.host,me)
+        &&(m.host===me||(users[m.host]&&users[m.host].friends.includes(me))))
       .map(m=>({id:m.id,host:m.host,hostElo:users[m.host].elo,mode:m.mode}));
     const mine=activeMatchOf(me);
     const qe=queue.find(e=>e.user===me);
@@ -1157,6 +1161,7 @@ try{
     if(!m||m.status!=='open')return bad(res,'Match no longer available');
     if(m.host===me)return bad(res,'You cannot join your own match');
     if(isBlocked(m.host,me))return bad(res,'Match no longer available');
+    if(!(users[m.host]&&users[m.host].friends.includes(me)))return bad(res,'Hosted matches are for the host\'s friends — use ⚡ Find match to play anyone');
     const cur=activeMatchOf(me);
     if(cur&&cur.status==='active')return bad(res,'You are already in a match');
     m.guest=me;m.status='active';m.started=Date.now();m.last=Date.now();

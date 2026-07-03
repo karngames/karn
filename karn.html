@@ -1474,12 +1474,12 @@ function finishGame(){
 /* ================= WIZARD ================= */
 function toggleMidCol(c){
   const w=UI.wiz.mid;
-  if(w.cols.includes(c))w.cols=w.cols.filter(v=>v!==c);
-  else if(w.cols.length<3)w.cols.push(c);
+  if(w.cols.includes(c)){w.cols=w.cols.filter(v=>v!==c);sfx('pickup');}
+  else if(w.cols.length<3){w.cols.push(c);sfx('wall');}
   applyMidPreview();
 }
 function setMidFlip(v){UI.wiz.mid.flip=v;applyMidPreview();}
-function randMid(){UI.wiz.mid=randomMid();applyMidPreview();}
+function randMid(){UI.wiz.mid=randomMid();sfx('wall');applyMidPreview();}
 function applyMidPreview(){
   G.walls=new Set(midWalls(UI.wiz.mid.cols,UI.wiz.mid.flip).map(w=>key(w[0],w[1])));
   netProgress();
@@ -1487,6 +1487,7 @@ function applyMidPreview(){
 }
 function confirmMid(){
   if(UI.wiz.mid.cols.length!==3)return;
+  sfx('confirm');
   if(G.mode==='online'){G.phase='walls';UI.wiz.myWalls=[];render();return;}
   if(G.mode==='pvp'){UI.wiz.setupOwner=0;toast('⬜ White sets up first');}
   else if(G.human===1){autoSetup(G,0);logMsg('White (AI) has deployed first, per the rules.','sys');UI.wiz.setupOwner=1;}
@@ -1500,13 +1501,13 @@ function toggleWallCell(x,y){
   }
   const k=key(x,y);
   if(G.walls.has(k)){
-    if(UI.wiz.myWalls.includes(k)){G.walls.delete(k);UI.wiz.myWalls=UI.wiz.myWalls.filter(v=>v!==k);}
-  }else if(UI.wiz.myWalls.length<4){G.walls.add(k);UI.wiz.myWalls.push(k);}
+    if(UI.wiz.myWalls.includes(k)){G.walls.delete(k);UI.wiz.myWalls=UI.wiz.myWalls.filter(v=>v!==k);sfx('pickup');}
+  }else if(UI.wiz.myWalls.length<4){G.walls.add(k);UI.wiz.myWalls.push(k);sfx('wall');}
   netProgress();
   render();
 }
 function autoWalls(){
-  clearWalls();
+  clearWalls();sfx('wall');
   const o=wizOwner(),r1=o===0?6:1,r2=o===0?5:2;
   for(const[wx,wy]of[[2,r2],[5,r2],[1,r1],[6,r1]]){
     const k=key(wx,wy);
@@ -1518,9 +1519,10 @@ function autoWalls(){
 function clearWalls(){for(const k of UI.wiz.myWalls)G.walls.delete(k);UI.wiz.myWalls=[];netProgress();render();}
 function confirmWalls(){
   if(UI.wiz.myWalls.length!==4)return;
+  sfx('confirm');
   G.phase='army';UI.wiz.army=armyTemplate();netProgress();render();
 }
-function resetArmy(){UI.wiz.army=armyTemplate();render();}
+function resetArmy(){UI.wiz.army=armyTemplate();sfx('ui');render();}
 function confirmArmy(){
   const counts={L:0,M:0,H:0};UI.wiz.army.forEach(s=>counts[s.base]++);
   if(counts.L>RULES.maxPerType||counts.M>RULES.maxPerType||counts.H>RULES.maxPerType){toast('Max '+RULES.maxPerType+' of each base type');return;}
@@ -1540,6 +1542,7 @@ function confirmArmy(){
   confirmArmy2();
 }
 function confirmArmy2(){
+  sfx('confirm');
   G.phase='place';UI.wiz.placed=Array(UI.wiz.army.length).fill(null);UI.wiz.slotSel=0;netProgress();render();
 }
 function selSlot(i){
@@ -1552,6 +1555,7 @@ function placeClick(x,y){
   const i=UI.wiz.slotSel;
   if(i==null||UI.wiz.placed[i]!=null){toast('Pick a unit from the roster first');return;}
   const p=makePiece(G,o,UI.wiz.army[i],x,y,o===0?0:4);
+  sfx('place');
   UI.wiz.placed[i]=p.id;
   UI.wiz.slotSel=UI.wiz.placed.findIndex(v=>v==null);
   if(UI.wiz.slotSel<0)UI.wiz.slotSel=null;
@@ -1562,15 +1566,18 @@ function removePlaced(pid){
   const i=UI.wiz.placed.indexOf(pid);
   if(i<0)return;
   G.pieces=G.pieces.filter(p=>p.id!==pid);
+  sfx('pickup');
   UI.wiz.placed[i]=null;UI.wiz.slotSel=i;netProgress();render();
 }
 function autoPlace(){
+  sfx('place');
   for(const pid of UI.wiz.placed)if(pid!=null)G.pieces=G.pieces.filter(p=>p.id!==pid);
   UI.wiz.placed=autoSetup(G,wizOwner(),UI.wiz.army,false);
   UI.wiz.slotSel=null;netProgress();render();
 }
 function confirmPlace(){
   if(UI.wiz.placed.some(v=>v==null))return;
+  sfx('confirm');
   if(G.mode==='online'){
     const units=UI.wiz.placed.map(pid=>{const q=byId(G,pid);return{x:q.x,y:q.y};});
     const army=UI.wiz.army.map(s=>({...s}));
@@ -1611,17 +1618,18 @@ function edValid(sp){
   if(sp.armor>left)sp.armor=left;
   if(sp.armor<0)sp.armor=0;
 }
-function edSetBase(b){if(UI.editor.cfg.fixedBase)return;UI.editor.spec.base=b;edValid(UI.editor.spec);edRender();}
+function edSetBase(b){if(UI.editor.cfg.fixedBase)return;UI.editor.spec.base=b;edValid(UI.editor.spec);sfx('ui');edRender();}
 function edSetGun(g){
   const sp=UI.editor.spec;
   sp.gun=g==='none'?null:g;
-  edValid(sp);edRender();
+  edValid(sp);sfx('ui');edRender();
 }
-function edArmor(d){UI.editor.spec.armor+=d;edValid(UI.editor.spec);edRender();}
-function edBoost(){UI.editor.spec.boost=!UI.editor.spec.boost;edValid(UI.editor.spec);edRender();}
+function edArmor(d){UI.editor.spec.armor+=d;edValid(UI.editor.spec);sfx('ui');edRender();}
+function edBoost(){UI.editor.spec.boost=!UI.editor.spec.boost;edValid(UI.editor.spec);sfx('ui');edRender();}
 function edSave(){
   const e=UI.editor;
   if(e.cfg.onSave(e.spec)!==false){
+    sfx('confirm');
     UI.editor=null;closeModal();
     if(G.mode==='online'&&G.phase==='army')netProgress();  /* army edits count as activity */
     render();
@@ -1830,6 +1838,11 @@ function sfx(kind){
       noise(.05,.06,.26,'bandpass',1400,5);
     }
     else if(kind==='turn'){bell(523.25,.55,.08);bell(659.25,.65,.06,.13);} /* gentle C5-E5 chime */
+    else if(kind==='ui'){noise(.025,.07,0,'bandpass',1800,5);}              /* tiny component click */
+    else if(kind==='place'){noise(.09,.15,0,'lowpass',500);tone(140,85,.09,'triangle',.07,.01);} /* tank set down */
+    else if(kind==='pickup'){tone(170,250,.06,'triangle',.07);}             /* lifted back off the board */
+    else if(kind==='wall'){noise(.13,.2,0,'lowpass',300);noise(.05,.08,.02,'bandpass',900,3);}   /* stone thud */
+    else if(kind==='confirm'){bell(392,.35,.07);bell(523.25,.45,.06,.09);}  /* step confirmed */
   }catch(e){}
 }
 function toggleSound(){
@@ -1953,7 +1966,7 @@ function renderLobby(){
     ${(L.open&&L.open.length)?L.open.map(o=>`<div class="lobrow">
         <span class="grow"><b>${o.host}</b> (${o.hostElo}) · ${o.mode==='quick'?'quick start':'full setup'}</span>
         ${o.host!==NET.user?`<button class="btn small gold" onclick="joinMatch('${o.id}')">⚔ Join</button>`:''}</div>`).join('')
-      :'<div class="hint">No open matches — host one and tell a friend to join.</div>'}
+      :'<div class="hint">No open matches from your friends. Host one (only your friends see it) or hit ⚡ Find match to queue against anyone.</div>'}
     <h4>Leaderboard</h4>
     ${(L.players||[]).slice(0,10).map((p,i)=>`<div class="lobrow">
         <span style="width:18px;color:var(--dim)">${i+1}</span>
