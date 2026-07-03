@@ -4138,7 +4138,7 @@ function renderRulesPage(){
   const tank=(base,gun,armor,boost,track,owner)=>`<svg viewBox="-46 -50 92 100" style="width:64px;height:70px">${pieceInner({owner:owner||0,base,gun,armor:armor||0,boost:!!boost,track:!!track})}</svg>`;
   const statrow=(l,v)=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0"><span style="color:var(--dim)">${l}</span><b>${v}</b></div>`;
   page.innerHTML=`<h1 class="ptitle">HOW TO PLAY</h1>
-  <div class="hint" style="margin:-8px 0 14px">All the diagrams are drawn by the game engine, so they always match the current rules. Red squares are firing zones, green dots are legal moves.</div>
+  <div class="hint" style="margin:-8px 0 14px">The rules are displayed accorss these cards below:</div>
   <div class="cards">
 
   <div class="card"><h3>🎯 How you win</h3>
