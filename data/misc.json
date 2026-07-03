@@ -150,6 +150,11 @@
      "by": "KARN Assistant",
      "text": "I understand you'd like your suspension reviewed. Account bans can only be lifted by the server administrator, so I've escalated your appeal to them directly with everything you've written here.\n\nWhat happens next: the admin reviews the ban reason and your message, then replies on this ticket. You'll get an email the moment they do.",
      "ts": 1783064018627
+    },
+    {
+     "by": "RubenHillier",
+     "text": "There is a bug where the password shows when typing it in",
+     "ts": 1783066426160
     }
    ],
    "human": true,
@@ -308,5 +313,6 @@
    "rules": [],
    "play": []
   }
- }
+ },
+ "devices": {}
 }

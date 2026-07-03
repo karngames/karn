@@ -18,6 +18,15 @@
   ],
   "notifs": [
    {
+    "id": 1,
+    "ts": 1783066426160,
+    "read": false,
+    "type": "info",
+    "text": "🛟 Support ticket #11 from RubenHillier: \"There is a bug where the password shows when typing it in\"",
+    "from": null,
+    "data": null
+   },
+   {
     "id": 3,
     "ts": 1783064018627,
     "read": false,
