@@ -57,9 +57,9 @@ body::before{
 #page{width:100%;max-width:1080px;margin:0 auto;padding:6px 4px 30px}
 #page.hidden{display:none}
 .ptitle{font-family:Georgia,serif;color:var(--gold);letter-spacing:5px;font-size:24px;margin:4px 0 16px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:14px;align-items:start}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:14px}
 .card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:14px;padding:18px 20px}
-.card h3{font-size:15px;margin-bottom:12px}
+.card h3{font-size:15px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
 .card h4{font-size:10.5px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin:14px 0 8px}
 .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin:12px 0}
 .stat{background:#111c15;border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center}
@@ -1144,7 +1144,7 @@ function renderSide(){
   else if(G.phase==='mid'){
     const w=UI.wiz.mid;
     h=`<div class="panel"><h3>Step 1 / 4 · Centre walls</h3>
-      <div class="hint" style="margin:0 0 10px">Pick <b>3 columns</b> for the first centre row. The second centre row uses the <b>same</b> or <b>mirrored</b> columns — these are the 112 legal setups from the rulebook.</div>
+      <div class="hint" style="margin:0 0 10px">Pick 3 columns for the first centre row. The second row copies or mirrors them, as in the rulebook.</div>
       <div class="row wrap" style="margin-bottom:10px">${[0,1,2,3,4,5,6,7].map(c=>`<button class="chip ${w.cols.includes(c)?'on':''}" onclick="toggleMidCol(${c})">${'abcdefgh'[c]}</button>`).join('')}</div>
       <div class="row" style="margin-bottom:12px">
         <button class="chip ${!w.flip?'on':''}" onclick="setMidFlip(false)">SAME</button>
@@ -1157,7 +1157,7 @@ function renderSide(){
     const n=UI.wiz.myWalls.length;
     const pfx=(G.mode==='pvp'||G.mode==='online')?(wizOwner()===0?'⬜ White · ':'⬛ Black · '):'';
     h=`<div class="panel"><h3>${pfx}Step 2 / 4 · Your walls</h3>
-      <div class="hint" style="margin:0 0 12px">Place <b>4 walls</b> in the two highlighted rows — walls cannot go on your back rank. Click a placed wall to remove it.</div>
+      <div class="hint" style="margin:0 0 12px">Place 4 walls in the highlighted rows. Walls can't go on your back rank. Click a wall to remove it.</div>
       <div style="font-size:22px;font-weight:700;color:var(--gold);margin-bottom:12px">${n} / 4 placed</div>
       <div class="row"><button class="btn small" onclick="autoWalls()">⚡ Auto</button>
       <button class="btn small" onclick="clearWalls()">Reset</button><span class="grow"></span></div>
@@ -1285,7 +1285,7 @@ function renderSide(){
     const left=Math.max(0,RULES.setupSecs-Math.floor((Date.now()-NET.mySetupStart)/1000));
     h=`<div class="panel" style="border-color:${left<=20?'var(--bad)':'var(--line)'}">
       <div style="font-size:13.5px">⏱ Your setup clock: <b class="clk" style="color:${left<=20?'var(--bad)':'var(--gold)'}">${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}</b></div>
-      <div class="hint" style="margin:4px 0 0">Finish deploying before it runs out — overtime forfeits the match.</div></div>`+h;
+      <div class="hint" style="margin:4px 0 0">Finish setting up before it runs out or the match is forfeited.</div></div>`+h;
   }
   /* Keep the DOM stable so the panel never bounces back to the top mid-scroll:
      1. nothing changed -> don't touch the DOM at all
@@ -2260,7 +2260,7 @@ function showSupport(){
   a.innerHTML=`<div class="authcard">
     <div class="authlogo">KARN</div>
     <div class="authsub">SUPPORT</div>
-    <div class="hint" style="margin-bottom:4px">Lost password, ban appeal, anything else — this opens a <b>support ticket</b>. Our automated assistant replies in seconds and can email recovery codes instantly; say "human" any time to reach real staff. With a linked email you get a conversation link that needs no login.</div>
+    <div class="hint" style="margin-bottom:4px">Lost password, ban appeal, or anything else. This opens a support ticket: the assistant usually replies straight away, and you can say "human" at any point to reach staff. If your account has an email linked you'll also get a link to the conversation that works without logging in.</div>
     <input id="inSup" class="txt" placeholder="Username" maxlength="16" spellcheck="false">
     <textarea id="inSupMsg" class="txt" rows="3" style="resize:vertical" placeholder="What do you need help with?"></textarea>
     <div id="netErr" style="font-size:12.5px;min-height:34px;margin-top:8px;color:var(--bad)"></div>
@@ -2385,7 +2385,7 @@ function showSupportHub(mode){
       <button class="chip ${mode==='fb'?'on':''}" onclick="showSupportHub('fb')">💬 Feedback</button>
     </div>
     ${mode==='ticket'
-      ?`<div class="hint" style="margin-bottom:6px">Opens a ticket under your account. Our automated assistant replies in seconds — recovery codes, rules answers, escalations — and you can say "human" any time to reach real staff. Replies land in your 🔔 Notifications${NET.profile&&NET.profile.email?' and your email':''}.</div>
+      ?`<div class="hint" style="margin-bottom:6px">Opens a ticket under your account. The assistant handles recovery codes, rules questions and escalations, and "human" gets you to staff at any point. Replies land in your 🔔 Notifications${NET.profile&&NET.profile.email?' and your email':''}.</div>
         <textarea id="shText" class="txt" rows="5" style="resize:vertical" placeholder="Describe the problem — account issues, another player, anything…"></textarea>
         <div style="height:12px"></div>
         <div class="row"><button class="btn gold" onclick="hubTicket()">🎫 Open ticket</button>
@@ -3416,8 +3416,7 @@ function renderPlayPage(){
     ${inQ
       ?`<div style="border:1px solid var(--gold);border-radius:10px;padding:14px;margin-bottom:8px">
          <span class="thinking">🔎 Searching for an opponent… ${Math.floor(q.waiting/1000)}s</span>
-         <div class="hint" style="margin:8px 0 10px">Matching you with a player near your Elo.
-           After <b>10 seconds</b> you'll be paired with the best available opponent, whatever their rating.</div>
+         <div class="hint" style="margin:8px 0 10px">Looking for someone near your rating first. After 10 seconds you'll get the best opponent available.</div>
          <button class="btn small danger" onclick="queueCancel()">✕ Leave queue</button></div>`
       :`<div class="row wrap">
          <button class="btn gold" onclick="queueJoin('quick')">⚡ Find quick match</button>
@@ -3460,7 +3459,7 @@ function renderLeadersPage(){
   const page=document.getElementById('page');
   const L=NET.lobby;
   page.innerHTML=`<h1 class="ptitle">LEADERBOARD — TOP 10</h1>
-   <div class="hint" style="margin:-8px 0 12px">Only the ten highest-rated commanders are shown. Everyone else stays hidden.</div>
+   <div class="hint" style="margin:-8px 0 12px">Only the top ten are shown.</div>
    <div class="card">${!NET.token
      ?`<div class="hint" style="margin-bottom:10px">Log in to see the leaderboard.</div><button class="btn gold" onclick="showAuth()">🔑 Log in</button>`
      :!L?'<div class="hint">Loading…</div>'
@@ -4139,17 +4138,17 @@ function renderRulesPage(){
   const tank=(base,gun,armor,boost,track,owner)=>`<svg viewBox="-46 -50 92 100" style="width:64px;height:70px">${pieceInner({owner:owner||0,base,gun,armor:armor||0,boost:!!boost,track:!!track})}</svg>`;
   const statrow=(l,v)=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0"><span style="color:var(--dim)">${l}</span><b>${v}</b></div>`;
   page.innerHTML=`<h1 class="ptitle">HOW TO PLAY</h1>
-  <div class="hint" style="margin:-8px 0 14px">Every diagram below is drawn by the game engine itself — red squares are real firing zones, green dots are real legal moves.</div>
+  <div class="hint" style="margin:-8px 0 14px">All the diagrams are drawn by the game engine, so they always match the current rules. Red squares are firing zones, green dots are legal moves.</div>
   <div class="cards">
 
-  <div class="card"><h3>🎯 The goal — two ways to win</h3>
-    <div class="hint">Destroy <b>every</b> enemy piece — or park <b>two of your pieces</b> on the two ◇ squares in the middle of the enemy back rank.</div>
+  <div class="card"><h3>🎯 How you win</h3>
+    <div class="hint">Two ways: destroy every enemy piece, or hold both ◇ squares in the middle of the enemy back rank at the same time.</div>
     ${rbSVG({w:8,h:3,gold:[[3,0],[4,0]],pieces:[{x:3,y:0,dir:0,base:'M',gun:'sg',owner:0},{x:4,y:0,dir:0,base:'L',gun:'sg',owner:0},{x:6,y:1,dir:4,base:'H',gun:'bg',owner:1,armor:1}]})}
-    <div class="hint">Blue has both ◇ squares of Black's back rank — instant win, even with enemies still alive.</div></div>
+    <div class="hint">Here Blue holds both of Black's ◇ squares, so Blue wins on the spot.</div></div>
 
   <div class="card"><h3>🎲 Your turn</h3>
     <div style="display:flex;gap:8px;margin:10px 0;justify-content:center">${'<div class="pip"></div>'.repeat(3)}</div>
-    <div class="hint" style="line-height:1.7">You get <b>3 actions</b> per round, and one piece may use at most <b>2</b> of them. An action is: <b>rotate</b> (face any of 8 directions), <b>move</b> (straight ahead, up to your speed per round), <b>shoot</b> (once per piece per round), or <b>repair</b> your tracks. Rounds alternate — White always starts.</div></div>
+    <div class="hint" style="line-height:1.7">You get <b>3 actions</b> each round, and no piece can use more than <b>2</b> of them. An action is one of: turn to face a new direction, move straight ahead, shoot, or repair your tracks. White always goes first.</div></div>
 
   <div class="card"><h3>🚜 The three tank classes</h3>
     <div style="display:flex;gap:10px;text-align:center">
@@ -4157,42 +4156,41 @@ function renderRulesPage(){
       <div style="flex:1">${tank('M','sg',1)}<b style="font-size:12.5px">Medium</b>${statrow('Speed',2)}${statrow('Hit points',2)}${statrow('Slots (AP)',2)}</div>
       <div style="flex:1">${tank('H','bg',1)}<b style="font-size:12.5px">Heavy</b>${statrow('Speed',1)}${statrow('Hit points',3)}${statrow('Slots (AP)',3)}</div>
     </div>
-    <div class="hint" style="margin-top:8px">A tank's <b>slots (AP)</b> are what make it yours — every hull is a chassis waiting for modules. Full details below.</div></div>
+    <div class="hint" style="margin-top:8px">A tank's slots decide what it can carry. The modules card below covers how equipping works.</div></div>
 
-  <div class="card"><h3>🧰 Modules — how equipping works</h3>
-    <div class="hint" style="line-height:1.7">Every tank = <b>one hull + modules</b> filling its slots. The rules of the workshop:
-    <br>• <b>One gun maximum</b> per tank (a tank may also go unarmed).
-    <br>• <b>Armour</b> fills any leftover slots, +1 HP each.
-    <br>• <b>Speed boost</b> mounts under the hull — 1 slot, Level 2 only, never on Lights.
-    <br>• Loadouts are built in the armoury during setup. After that, a tank can only be <b>refitted while sitting on your own back rank</b> — refits are free, so a sniper that limps home can leave as something else entirely.
-    <br>• Empty slots are wasted power — the armoury warns you before you deploy with unused AP.</div>
+  <div class="card"><h3>🧰 Modules</h3>
+    <div class="hint" style="line-height:1.7">Each tank is a hull plus the modules you fit into its slots:
+    <br>• One gun at most. Unarmed is allowed.
+    <br>• Armour fills spare slots, +1 HP each.
+    <br>• Speed boost takes 1 slot. Level 2 only, never on Lights.
+    <br><br>You build loadouts in the armoury during setup. After that a tank can only be refitted on your own back rank, and refits are free. The armoury warns you if you try to deploy with empty slots.</div>
     <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:12px;text-align:center">
       ${[['sg','Small Gun'],['bg','Big Gun'],['sn','Sniper'],['ds','Dbl Sniper'],['dg','Dirt Gun'],['ar','Armour'],['bo','Boost']]
         .map(([t,n])=>`<div style="width:62px">${compSVG(t)}<div class="hint" style="margin:3px 0 0;font-size:10.5px">${n}</div></div>`).join('')}
     </div>
-    <div class="hint" style="margin-top:10px">You can read a tank's modules at a glance: <b>hull rings</b> = armour, <b>gold chevrons</b> = speed boost, and each gun has its own barrel shape.</div></div>
+    <div class="hint" style="margin-top:10px">Reading a tank at a glance: hull rings are armour, gold chevrons are a speed boost, and each gun has its own barrel shape.</div></div>
 
-  <div class="card"><h3>🛡 Armour — 1 slot each</h3>
+  <div class="card"><h3>🛡 Armour</h3>
     <div style="display:flex;gap:10px;text-align:center;justify-content:center">
       <div>${compSVG('ar',46)}<div class="hint" style="margin:0">the module</div></div>
       <div>${tank('M','sg')}<div class="hint" style="margin:0">no armour<br>2 HP</div></div>
       <div>${tank('M','sg',1)}<div class="hint" style="margin:0">1 ring<br>3 HP</div></div>
       <div>${tank('H','sg',2)}<div class="hint" style="margin:0">2 rings<br>5 HP</div></div>
     </div>
-    <div class="hint" style="margin-top:8px"><b>What:</b> +1 HP per slot, stacking. <b>Why:</b> it's the cheapest way to survive an extra hit — an armoured Heavy soaks four or five shots and holds ground nothing else can. <b>The catch:</b> snipers fire armour-piercing rounds (+1 damage vs Heavies), so a wall of metal invites a marksman.</div></div>
+    <div class="hint" style="margin-top:8px">+1 HP per slot, and it stacks. A fully armoured Heavy takes five hits to bring down, which makes it very hard to shift. Snipers are the answer to it: they do +1 damage against Heavies no matter how much armour is on.</div></div>
 
-  <div class="card"><h3>⚡ Speed boost — 1 slot · Level 2 · not on Lights</h3>
+  <div class="card"><h3>⚡ Speed boost</h3>
     <div style="display:flex;gap:10px;justify-content:center;align-items:center">
       <div style="text-align:center">${compSVG('bo',46)}<div class="hint" style="margin:0">the module</div></div>
       ${tank('H','bg',0,true)}${tank('M','sg',0,true)}</div>
-    <div class="hint" style="margin-top:8px"><b>What:</b> +1 speed, forever. <b>Why:</b> it deletes the Heavy's one weakness — a boosted Heavy (speed 2) arrives at the ◇ squares twice as fast, and a boosted Medium (speed 3) matches a Light while carrying twice the health. <b>The cost:</b> that slot can't be armour or a bigger gun — a boosted Heavy with a Big Gun has no room left to armour up.</div></div>
+    <div class="hint" style="margin-top:8px">+1 speed for 1 slot, Level 2 only, never on Lights. A boosted Heavy moves at speed 2 and reaches the ◇ squares twice as fast; a boosted Medium keeps up with Lights while carrying twice the health. The trade is that the slot can't hold armour or a bigger gun.</div></div>
 
-  <div class="card"><h3>🎯 Choosing a gun — the why</h3>
-    ${[['sg','Small Gun (1 slot)','Modest reach, but it leaves room for armour — the backbone of a durable line.'],
-       ['bg','Big Gun (2 slots)','The only arc weapon that hits for −2. It cracks armoured tanks in half the shots; on a Heavy it costs 2 of 3 slots, so armour <i>or</i> nothing.'],
-       ['sn','Sniper (1 slot · Light only)','Your Heavy-killer — range 4, −1 HP, shoots past tanks, +1 vs Heavies. The trade: the carrier slows to speed 1 and dies to a stiff breeze, so park it behind walls with a clean lane.'],
-       ['ds','Double Sniper (Level 2 upgrade)','Range 5, −2 HP (−3 vs Heavies). The scariest gun in the game on the longest lanes — the reward for reaching the enemy back rank.'],
-       ['dg','Dirt Gun (2 slots · Heavy only · Level 2)','The point-blank brawler: range 1 but <b>all around</b> — every adjacent square is a target, even behind. <b>−4 HP dead ahead</b> one-shots most tanks; −1 everywhere else. Park it in a choke point and dare them to come close.']]
+  <div class="card"><h3>🎯 Choosing a gun</h3>
+    ${[['sg','Small Gun (1 slot)','Short reach, but it leaves room for armour. A solid backbone for your line.'],
+       ['bg','Big Gun (2 slots)','Hits for −2 in a wide arc, so it cracks armoured tanks in half the shots. On a Heavy it takes 2 of the 3 slots.'],
+       ['sn','Sniper (1 slot · Light only)','Range 4, shoots past tanks, +1 damage against Heavies. The carrier drops to speed 1 and only has 1 HP, so keep it behind walls with a clear lane.'],
+       ['ds','Double Sniper (Level 2 upgrade)','Range 5 for −2 HP (−3 against Heavies). The reward for reaching the enemy back rank.'],
+       ['dg','Dirt Gun (2 slots · Heavy only · Level 2)','Range 1, but it hits every adjacent square, even behind. −4 straight ahead one-shots most tanks; −1 everywhere else. Strongest in a choke point.']]
       .map(([t,n,d])=>`<div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
         <div style="flex:none">${compSVG(t,44)}</div>
         <div class="hint" style="margin:0;line-height:1.55"><b style="color:var(--ink)">${n}:</b> ${d}</div></div>`).join('')}</div>
@@ -4204,50 +4202,50 @@ function renderRulesPage(){
       <div style="flex:1;min-width:110px">${tank('L','sn')}<b style="font-size:12px">Hunter</b><div class="hint" style="margin:0">Light · Sniper<br>melts the enemy Fortress</div></div>
       <div style="flex:1;min-width:110px">${tank('L','sg')}<b style="font-size:12px">Runner</b><div class="hint" style="margin:0">Light · Small Gun<br>speed 3 — steals ◇ squares</div></div>
     </div>
-    <div class="hint" style="margin-top:8px">No single build wins alone — Brawlers beat Fortresses, Hunters beat Brawlers, Runners punish anyone too slow to defend home.</div></div>
+    <div class="hint" style="margin-top:8px">Every build has a counter: Brawlers beat Fortresses, Hunters beat Brawlers, and Runners punish armies too slow to defend home.</div></div>
 
   <div class="card"><h3>🚗 Movement</h3>
     ${moveDiag()}
-    <div class="hint">Tanks only drive <b>the way they face</b> — green dots are this Medium's real options (speed 2). Rotating to a new direction costs an action. Walls and tanks block the path.</div></div>
+    <div class="hint">Tanks only drive the way they face. The green dots are this Medium's real options at speed 2. Turning costs an action, and walls or tanks block the path.</div></div>
 
-  <div class="card"><h3>🔫 Small Gun — 1 slot</h3>
+  <div class="card"><h3>🔫 Small Gun</h3>
     ${gunDiag('sg',5,5,2,3,0)}
-    <div class="hint">Fires −1 HP along the 5 queen-lines that aren't behind it, range <b>1</b>. Cheap and nimble.</div></div>
+    <div class="hint">Range 1, −1 HP, along the five queen lines it isn't turned away from. Costs 1 slot, which leaves room for armour.</div></div>
 
-  <div class="card"><h3>🔫 Big Gun — 2 slots</h3>
+  <div class="card"><h3>🔫 Big Gun</h3>
     ${gunDiag('bg',5,5,2,3,0)}
-    <div class="hint">Same 180° fan, range <b>2</b>, and hits for <b>−2 HP</b>. The can-opener for armoured targets.</div></div>
+    <div class="hint">The same fan at range 2, hitting for −2 HP. Costs 2 slots. The standard answer to armour.</div></div>
 
-  <div class="card"><h3>🎯 Sniper — 1 slot, Light hulls only</h3>
+  <div class="card"><h3>🎯 Sniper</h3>
     ${gunDiag('sn',7,3,0,1,2,{pieces:[{x:2,y:1,owner:0,base:'M',gun:'sg',dir:2},{x:3,y:1,owner:1,base:'H',gun:'bg',dir:6}]})}
-    <div class="hint">One single line, range <b>4</b>, −1 HP — and it <b>shoots past tanks</b>: here it threatens the enemy Heavy straight through a friendly. Armour-piercing rounds do <b>+1 damage vs Heavies</b>. Walls still stop it.</div></div>
+    <div class="hint">One line, range 4, −1 HP. It shoots past tanks — here it threatens the enemy Heavy straight through a friendly — and does +1 damage against Heavies. Walls still block it. Light hulls only.</div></div>
 
-  <div class="card"><h3>🎯🎯 Double Sniper — Level 2 upgrade</h3>
+  <div class="card"><h3>🎯🎯 Double Sniper</h3>
     ${gunDiag('ds',7,3,0,1,2)}
-    <div class="hint">Range <b>5</b> — the longest reach in the game — hitting for <b>−2 HP</b> (−3 vs Heavies). Unlocked at Level 2 as an upgrade for snipers.</div></div>
+    <div class="hint">Range 5, the longest in the game, hitting for −2 HP (−3 against Heavies). Unlocked at Level 2 as a sniper upgrade.</div></div>
 
-  <div class="card"><h3>💥 Dirt Gun — Level 2 · Heavy only · 2 slots</h3>
+  <div class="card"><h3>💥 Dirt Gun</h3>
     ${gunDiag('dg',5,5,2,3,0,{labels:[[2,2,'−4'],[1,2,'−1'],[3,2,'−1'],[1,3,'−1'],[3,3,'−1'],[1,4,'−1'],[2,4,'−1'],[3,4,'−1']]})}
-    <div class="hint">The brawler cannon: <b>range 1, all 8 squares around it</b> — nothing adjacent is safe. <b>−4 HP dead ahead</b> (a one-shot on most tanks), −1 everywhere else. Rotating costs an action, so where it points matters. Refit a Heavy at your back rank once you hit Level 2.</div></div>
+    <div class="hint">Range 1, all 8 squares around it. −4 HP straight ahead is a one-shot on most tanks; everything else takes −1. Facing matters, since turning costs an action. Heavy hulls only, from Level 2.</div></div>
 
   <div class="card"><h3>📐 Line of sight</h3>
     ${gunDiag('bg',5,5,2,3,0,{walls:[[2,2]]})}
-    <div class="hint">Shots travel like a <b>chess queen</b> — straight or diagonal, and every square on the line must be clear. The wall kills this Big Gun's forward lane, but the diagonals still work. Two diagonally-touching walls leave a shootable gap between them.</div></div>
+    <div class="hint">Shots travel like a chess queen: straight or diagonal, with every square on the line clear. The wall here blocks this Big Gun's forward lane, but the diagonals still work. Two diagonally-touching walls leave a gap you can shoot through.</div></div>
 
   <div class="card"><h3>🔧 Shooting tracks</h3>
     <div style="text-align:center">${tank('M','sg',0,false,true,1)}</div>
-    <div class="hint">Any shot can instead <b>blow off the tracks</b>: the victim cannot move or turn until its owner spends an action repairing — and even then it only rolls again the round after. Perfect for stopping a runner heading to your ◇ squares.</div></div>
+    <div class="hint">Any shot can target the tracks instead. A tracked tank can't move or turn until its owner spends an action on the repair, and it only rolls again the round after that. Useful against a runner heading for your ◇ squares.</div></div>
 
   <div class="card"><h3>⭐ Level 2</h3>
     <div style="display:flex;gap:10px;justify-content:center">${tank('L','ds',0,false,false,0)}${tank('H','dg',1,false,false,0)}${tank('H','bg',0,true,false,0)}</div>
-    <div class="hint">The first time one of your pieces reaches the enemy back rank, you hit <b>Level 2</b>: snipers can become <b>double snipers</b>, Heavies can mount the <b>Dirt Gun</b>, and non-light tanks can take a <b>speed boost</b> (+1 speed, 1 slot — gold chevrons). Refitting is free, but only while a piece sits on your own back rank.</div></div>
+    <div class="hint">Reach the enemy back rank with any piece and you unlock Level 2: double snipers, the Dirt Gun, and speed boosts. Refit at your own back rank to use them. Refits are free.</div></div>
 
   <div class="card"><h3>🧱 Setting up</h3>
     ${rbSVG({w:8,h:4,walls:[[2,1],[3,1],[7,1],[0,2],[4,2],[5,2]]})}
-    <div class="hint">The centre gets <b>6 shared walls</b>: pick 3 columns for one row, the other row uses the same or mirrored columns (112 legal setups). Then each player hides behind <b>4 walls of their own</b> (in your three rows, never on the back rank) and deploys <b>8 tanks</b> — max 4 of each class. Don't leave slots empty; the armoury warns you if you do.</div></div>
+    <div class="hint">The centre gets 6 shared walls: pick 3 columns, and the other row copies or mirrors them. Then each player places 4 walls of their own in their three rows (never the back rank) and deploys 8 tanks, max 4 per class.</div></div>
 
   <div class="card"><h3>🏆 Playing online</h3>
-    <div class="hint" style="line-height:1.7">Hit <b>Find match</b> to queue — you're paired by Elo, widening to anyone after 10 seconds. Or challenge a friend directly from their profile. Wins and losses move your rating (K=32); you can offer draws, resign (with confirmation), and every finished match is saved for <b>replay</b> — with the engine's move-by-move <b>Game Review</b> grading your play.</div></div>
+    <div class="hint" style="line-height:1.7">Find match pairs you by rating, widening to anyone after 10 seconds, or you can challenge a friend from their profile. Wins and losses move your Elo. Every finished game is saved, with a replay and a move-by-move Game Review.</div></div>
 
   </div>${blockCardsHTML((PG().extends&&PG().extends.rules)||[],{type:'ext',key:'rules'})}`;
   applyCardOverrides(page,'rules');
