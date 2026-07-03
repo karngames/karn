@@ -4196,11 +4196,14 @@ function renderRulesPage(){
         <div class="hint" style="margin:0;line-height:1.55"><b style="color:var(--ink)">${n}:</b> ${d}</div></div>`).join('')}</div>
 
   <div class="card"><h3>🧪 Proven loadouts</h3>
-    <div style="display:flex;gap:8px;text-align:center;flex-wrap:wrap;justify-content:center">
-      <div style="flex:1;min-width:110px">${tank('H','bg',1)}<b style="font-size:12px">Brawler</b><div class="hint" style="margin:0">Heavy · Big Gun + armour<br>4 HP, −2 hits — the anchor</div></div>
-      <div style="flex:1;min-width:110px">${tank('H','sg',2)}<b style="font-size:12px">Fortress</b><div class="hint" style="margin:0">Heavy · Small Gun + 2 armour<br>5 HP — parks on a ◇ square</div></div>
-      <div style="flex:1;min-width:110px">${tank('L','sn')}<b style="font-size:12px">Hunter</b><div class="hint" style="margin:0">Light · Sniper<br>melts the enemy Fortress</div></div>
-      <div style="flex:1;min-width:110px">${tank('L','sg')}<b style="font-size:12px">Runner</b><div class="hint" style="margin:0">Light · Small Gun<br>speed 3 — steals ◇ squares</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+      ${[[tank('H','bg',1),'Brawler','Heavy · Big Gun + armour','4 HP, hits for −2'],
+         [tank('H','sg',2),'Fortress','Heavy · Small Gun + 2 armour','5 HP, parks on a ◇ square'],
+         [tank('L','sn'),'Hunter','Light · Sniper','picks apart the enemy Fortress'],
+         [tank('L','sg'),'Runner','Light · Small Gun','speed 3, steals ◇ squares']]
+        .map(([svg,nm,l1,l2])=>`<div style="flex:1;min-width:110px;display:flex;flex-direction:column;align-items:center;text-align:center">
+          ${svg}<b style="font-size:12px;margin-top:2px">${nm}</b>
+          <div class="hint" style="margin:2px 0 0">${l1}<br>${l2}</div></div>`).join('')}
     </div>
     <div class="hint" style="margin-top:8px">Every build has a counter: Brawlers beat Fortresses, Hunters beat Brawlers, and Runners punish armies too slow to defend home.</div></div>
 
