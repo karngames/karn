@@ -34,6 +34,14 @@ misc.support=misc.support||[];misc.smtp=misc.smtp||null;misc.tickets=misc.ticket
    player can also block their device from creating new accounts.          */
 misc.devices=misc.devices||{};
 misc.knownIssues=misc.knownIssues||[];
+misc.containers=misc.containers||[];  /* dev containers: private page forks, admin publishes */
+misc.meetings=misc.meetings||[];      /* staff team room: chat + agenda + votes + decisions */
+misc.dms=misc.dms||[];                /* private 1-on-1 management channels */
+/* staff chain of command — the structure most companies run:
+   individual contributors report to leads, leads to managers, managers to the top.
+   rank: 0 player · 1 Trainee · 2 Staff · 3 Team Lead · 4 Manager · 5 Admin */
+const RANK_NAMES=['Player','Trainee','Staff','Team Lead','Manager','Admin'];
+function rankOf(x){return x.admin?5:(x.rank||(x.staff?2:0));}
 const THEME_LIST=['default','sand','slate','crimson','midnight'];
 const DEV_LIMIT=5;
 function devOf(req){
@@ -53,30 +61,39 @@ misc.pages=misc.pages||{custom:[],extends:{}};
 function sanitizePages(pg){
   const out={custom:[],extends:{}};
   if(!pg||typeof pg!=='object')return out;
-  const clean=list=>(Array.isArray(list)?list:[]).slice(0,12)
-    .map(b=>({title:String((b&&b.title)||'').slice(0,60),body:String((b&&b.body)||'').slice(0,5000)}));
+  const clean=list=>(Array.isArray(list)?list:[]).slice(0,16)
+    .map(b=>{
+      const o={title:String((b&&b.title)||'').slice(0,60),body:String((b&&b.body)||'').slice(0,5000)};
+      if(b&&b.code)o.code=String(b.code).slice(0,20000);      /* JS code card (sandboxed on the client) */
+      if(b&&b.h)o.h=Math.max(80,Math.min(900,+b.h||260));
+      return o;
+    });
   for(const p of(Array.isArray(pg.custom)?pg.custom:[]).slice(0,8)){
     const id=String((p&&p.id)||'').toLowerCase();
     if(!/^[a-z0-9]{2,12}$/.test(id)||out.custom.some(x=>x.id===id))continue;
     out.custom.push({id,title:String(p.title||id).slice(0,20),
       icon:String(p.icon||'📄').slice(0,4),
-      vis:['all','users','staff','admin'].includes(p.vis)?p.vis:'all',
+      vis:['all','users','staff','admin','dev'].includes(p.vis)?p.vis:'all',
       blocks:clean(p.blocks)});
   }
-  for(const k of['rules','play'])
+  for(const k of['rules','play','leaders','profile','notifs','friends','staff','admin'])
     if(pg.extends&&pg.extends[k])out.extends[k]=clean(pg.extends[k]);
-  out.overrides={rules:{}};
-  if(pg.overrides&&pg.overrides.rules){
+  out.overrides={};
+  for(const pk of['rules','play','leaders','profile','notifs','friends','staff','admin']){
+    out.overrides[pk]={};
+    if(!pg.overrides||!pg.overrides[pk])continue;
     let n=0;
-    for(const k in pg.overrides.rules){
-      if(!/^[a-z0-9_]{2,20}$/.test(k)||++n>40)continue;
-      const o=pg.overrides.rules[k]||{};
-      out.overrides.rules[k]={title:String(o.title||'').slice(0,80),
-        pre:String(o.pre||'').slice(0,5000),post:String(o.post||'').slice(0,5000)};
+    for(const k in pg.overrides[pk]){
+      if(!/^[a-z0-9_]{2,20}$/.test(k)||++n>60)continue;
+      const o=pg.overrides[pk][k]||{};
+      out.overrides[pk][k]={title:String(o.title||'').slice(0,80),
+        pre:String(o.pre||'').slice(0,5000),post:String(o.post||'').slice(0,5000),
+        body:String(o.body||'').slice(0,8000),hide:o.hide?1:0};
     }
   }
   return out;
 }
+function balRule(k,dflt){const r=(misc.balance&&misc.balance.rules)||{};return Number.isFinite(+r[k])&&r[k]?+r[k]:dflt;}
 const num=(v,lo,hi,dflt)=>{const n=Math.round(+v);return Number.isFinite(n)?Math.max(lo,Math.min(hi,n)):dflt;};
 function sanitizeBalance(b){
   if(!b||typeof b!=='object')return null;
@@ -101,7 +118,9 @@ function sanitizeBalance(b){
   out.rules={actions:num(r.actions,1,6,3),perPiece:num(r.perPiece,1,6,2),
     armySize:num(r.armySize,4,10,8),maxPerType:num(r.maxPerType,1,10,4),
     snHeavyBonus:num(r.snHeavyBonus,0,3,1),dgAhead:num(r.dgAhead,1,9,4),
-    eloK:num(r.eloK,8,64,32),drawRound:num(r.drawRound,50,500,150)};
+    eloK:num(r.eloK,8,64,32),drawRound:num(r.drawRound,50,500,150),
+    setupSecs:num(r.setupSecs,30,900,240),idleSecs:num(r.idleSecs,10,300,30),
+    deviceLimit:num(r.deviceLimit,1,50,5)};
   return out;
 }
 for(const tk of misc.tickets){  /* migrate one-shot tickets to threads + guest keys */
@@ -514,7 +533,8 @@ for(const u in users){ /* ensure new fields exist on old accounts — never dele
   x.friends=x.friends||[];x.reqIn=x.reqIn||[];x.reqOut=x.reqOut||[];
   x.blocked=x.blocked||[];x.matches=x.matches||[];
   x.notifs=(x.notifs||[]).map(n=>n.type?n:{...n,type:'info',from:null,data:null});
-  x.private=!!x.private;x.admin=!!x.admin;x.staff=!!x.staff;
+  x.private=!!x.private;x.admin=!!x.admin;x.staff=!!x.staff;x.dev=!!x.dev;
+  x.rank=x.rank||(x.staff?2:0);x.manager=x.manager||null;
   x.banned=x.banned||null;x.flagged=x.flagged||null;
   x.emailPrefs=x.emailPrefs||{friendReq:true};
   if(ADMIN_NAMES.includes(u.toLowerCase())&&!x.admin){
@@ -867,7 +887,8 @@ try{
     if(dev){
       const D=devTouch(dev);
       if(D.banned)return bad(res,'Account creation is blocked on this device. Contact Support if you believe this is a mistake.',403);
-      if(D.users.filter(n=>users[n]).length>=DEV_LIMIT)return bad(res,'This device has reached the limit of '+DEV_LIMIT+' accounts',403);
+      const devLim=balRule('deviceLimit',DEV_LIMIT);
+      if(D.users.filter(n=>users[n]).length>=devLim)return bad(res,'This device has reached the limit of '+devLim+' accounts',403);
     }
     const first=Object.keys(users).length===0||ADMIN_NAMES.includes(u.toLowerCase());
     const{salt,hash}=hashPass(pw);
@@ -1059,7 +1080,7 @@ try{
     if(qe)qe.alive=Date.now();          /* heartbeat while queued */
     return json(res,200,{players,open,match:mine?matchInfo(mine,me):null,
       queue:{waiting:qe?Date.now()-qe.ts:null,mode:qe?qe.mode:null,size:queue.length},
-      me:{...pub(me),admin:M.admin,staff:M.staff,privateFlag:M.private,email:M.email||'',
+      me:{...pub(me),admin:M.admin,staff:M.staff,dev:!!M.dev,rank:rankOf(M),manager:M.manager||null,privateFlag:M.private,email:M.email||'',
         emailFriendReq:M.emailPrefs.friendReq!==false,theme:M.theme||'default',
         unread:M.notifs.filter(n=>!n.read).length,reqIn:M.reqIn.length,balV:misc.balV,
         latest:M.notifs.slice(0,6),
@@ -1228,6 +1249,170 @@ try{
   /* ================= staff tools ================= */
   if(p.startsWith('/api/staff/')){
     if(!STAFF)return bad(res,'Staff only',403);
+    const myRank=rankOf(M);
+    const notifyRank=(min,n,except)=>{for(const u2 in users)if(u2!==me&&u2!==except&&rankOf(users[u2])>=min)addNotif(u2,n);};
+
+    /* ---------- team roster & chain of command ---------- */
+    if(p==='/api/staff/team'&&req.method==='GET'){
+      const team=Object.keys(users).filter(u2=>rankOf(users[u2])>0)
+        .map(u2=>({user:u2,rank:rankOf(users[u2]),rankName:RANK_NAMES[rankOf(users[u2])],
+          manager:users[u2].manager||null,elo:users[u2].elo,dev:!!users[u2].dev,
+          reports:Object.keys(users).filter(r2=>users[r2].manager===u2&&rankOf(users[r2])>0).length}))
+        .sort((a,b)=>b.rank-a.rank||a.user.localeCompare(b.user));
+      return json(res,200,{team,myRank,rankNames:RANK_NAMES});
+    }
+    if(p==='/api/staff/setrank'&&req.method==='POST'){
+      const t2=findUser(body.user);
+      if(!t2)return bad(res,'No such player');
+      if(users[t2].admin)return bad(res,'The admin outranks everyone');
+      const cur=rankOf(users[t2]),want=Math.max(0,Math.min(4,+body.rank||0));
+      /* chain of command: you may only manage people BELOW you, and only
+         move them within the ranks below you */
+      if(!M.admin){
+        if(myRank<3)return bad(res,'Only Team Leads and above can change ranks',403);
+        if(cur>=myRank)return bad(res,'You cannot change the rank of someone at or above your own rank',403);
+        if(want>=myRank)return bad(res,'You cannot promote someone to your own rank or higher',403);
+      }
+      users[t2].rank=want;users[t2].staff=want>0;
+      if(want===0)users[t2].manager=null;
+      saveU();
+      const dir=want>cur?'promoted':want<cur?'demoted':'confirmed';
+      addNotif(t2,{type:'info',text:want>0
+        ?`${dir==='promoted'?'🎖 You have been PROMOTED':dir==='demoted'?'📉 You have been moved':'🧰 Your role was confirmed'} to ${RANK_NAMES[want]} by ${me}`
+        :`Your staff role was removed by ${me}`});
+      if(users[t2].email&&want!==cur)
+        sendUserMail(t2,`[KARN Staff] Role change: ${RANK_NAMES[want]||'Player'}`,
+          dir==='promoted'?'Congratulations!':'Role update',
+          `${me} has ${dir} you ${want>0?'to '+RANK_NAMES[want]:'out of the staff team'}.${want>cur?'\n\nKeep it up — the team noticed your work.':''}`,null);
+      notifyRank(3,{type:'info',text:`🧰 ${me} ${dir} ${t2} ${want>0?'to '+RANK_NAMES[want]:'(removed from staff)'}`},t2);
+      return json(res,200,{ok:1,rank:want});
+    }
+    if(p==='/api/staff/setmanager'&&req.method==='POST'){
+      const t2=findUser(body.user),mg=body.manager?findUser(body.manager):null;
+      if(!t2)return bad(res,'No such player');
+      if(body.manager&&!mg)return bad(res,'No such manager');
+      if(!M.admin&&myRank<3)return bad(res,'Only Team Leads and above can assign reports',403);
+      if(!M.admin&&rankOf(users[t2])>=myRank)return bad(res,'They are at or above your rank',403);
+      if(mg&&rankOf(users[mg])<=rankOf(users[t2]))return bad(res,'A manager must outrank their report');
+      if(mg===t2)return bad(res,'Nobody reports to themselves');
+      users[t2].manager=mg;saveU();
+      if(mg)addNotif(t2,{type:'info',text:`🧭 You now report to ${mg} (${RANK_NAMES[rankOf(users[mg])]})`});
+      if(mg)addNotif(mg,{type:'info',text:`🧭 ${t2} (${RANK_NAMES[rankOf(users[t2])]}) now reports to you`});
+      return json(res,200,{ok:1});
+    }
+
+    /* ---------- team room: meetings with agenda, votes & recorded decisions ---------- */
+    if(p==='/api/staff/meetings'&&req.method==='GET'){
+      return json(res,200,{meetings:misc.meetings.filter(mt=>myRank>=mt.minRank)
+        .map(mt=>({id:mt.id,title:mt.title,by:mt.by,ts:mt.ts,status:mt.status,minRank:mt.minRank,
+          msgs:mt.messages.length,open:mt.agenda.filter(a=>a.status==='open').length,
+          decided:mt.agenda.filter(a=>a.status==='decided').length})),myRank});
+    }
+    if(p==='/api/staff/meeting/create'&&req.method==='POST'){
+      if(misc.meetings.filter(mt=>mt.status==='open').length>=20)return bad(res,'Too many open meetings');
+      const minRank=Math.max(1,Math.min(Math.min(4,myRank),+body.minRank||1));
+      const mt={id:misc.fseq++,title:String(body.title||'Team meeting').slice(0,80),by:me,
+        ts:Date.now(),status:'open',minRank,messages:[],agenda:[]};
+      misc.meetings.unshift(mt);
+      if(misc.meetings.length>100)misc.meetings.length=100;
+      saveS();
+      notifyRank(minRank,{type:'info',text:`🏛 ${me} opened a team meeting: "${mt.title}"${minRank>1?' ('+RANK_NAMES[minRank]+'+ only)':''}`});
+      return json(res,200,{ok:1,id:mt.id});
+    }
+    {
+      const mt=misc.meetings.find(x=>x.id===+((body&&body.id)||url.searchParams.get('id')));
+      const inMt=mt&&myRank>=mt.minRank;
+      if(p==='/api/staff/meeting'&&req.method==='GET'){
+        if(!inMt)return bad(res,'Meeting not found',404);
+        return json(res,200,{meeting:mt,myRank,rankNames:RANK_NAMES});
+      }
+      if(p==='/api/staff/meeting/msg'&&req.method==='POST'){
+        if(!inMt)return bad(res,'Meeting not found',404);
+        if(mt.status!=='open')return bad(res,'This meeting is closed');
+        const text=String(body.text||'').trim().slice(0,600);
+        if(text.length<1)return bad(res,'Write a message first');
+        if(mt.messages.length>=400)return bad(res,'Meeting log is full');
+        mt.messages.push({by:me,rank:myRank,text,ts:Date.now()});saveS();
+        return json(res,200,{ok:1,meeting:mt});
+      }
+      if(p==='/api/staff/meeting/agenda'&&req.method==='POST'){
+        if(!inMt)return bad(res,'Meeting not found',404);
+        if(mt.status!=='open')return bad(res,'This meeting is closed');
+        if(mt.agenda.length>=30)return bad(res,'Agenda is full');
+        const a={id:misc.fseq++,text:String(body.text||'').trim().slice(0,300),by:me,status:'open',votes:{},decision:''};
+        if(!a.text)return bad(res,'Write the agenda item first');
+        mt.agenda.push(a);saveS();
+        return json(res,200,{ok:1,meeting:mt});
+      }
+      if(p==='/api/staff/meeting/vote'&&req.method==='POST'){
+        if(!inMt)return bad(res,'Meeting not found',404);
+        const a=mt.agenda.find(x=>x.id===+body.aid);
+        if(!a||a.status!=='open')return bad(res,'Item not open for voting');
+        a.votes[me]=+body.v>0?1:-1;saveS();
+        return json(res,200,{ok:1,meeting:mt});
+      }
+      if(p==='/api/staff/meeting/decide'&&req.method==='POST'){
+        if(!inMt)return bad(res,'Meeting not found',404);
+        const a=mt.agenda.find(x=>x.id===+body.aid);
+        if(!a)return bad(res,'No such agenda item');
+        /* decisions are recorded by the chair (creator) or any Team Lead+ */
+        if(me!==mt.by&&myRank<3)return bad(res,'Only the meeting chair or a Team Lead+ records decisions',403);
+        a.status='decided';a.decision=String(body.decision||'').slice(0,300)||'Approved';
+        a.decidedBy=me;a.decidedTs=Date.now();saveS();
+        notifyRank(mt.minRank,{type:'info',text:`✅ Decision in "${mt.title}": ${a.text.slice(0,60)} → ${a.decision.slice(0,60)}`},me);
+        return json(res,200,{ok:1,meeting:mt});
+      }
+      if(p==='/api/staff/meeting/close'&&req.method==='POST'){
+        if(!inMt)return bad(res,'Meeting not found',404);
+        if(me!==mt.by&&myRank<3&&!M.admin)return bad(res,'Only the chair or a Team Lead+ closes meetings',403);
+        mt.status='closed';mt.closedBy=me;mt.closedTs=Date.now();saveS();
+        const dec=mt.agenda.filter(a=>a.status==='decided');
+        notifyRank(mt.minRank,{type:'info',text:`🏛 Meeting "${mt.title}" closed — ${dec.length} decision(s) recorded`},me);
+        return json(res,200,{ok:1});
+      }
+    }
+
+    /* ---------- 1-on-1 management channels ---------- */
+    if(p==='/api/staff/dms'&&req.method==='GET'){
+      return json(res,200,{dms:misc.dms.filter(d=>d.a===me||d.b===me)
+        .map(d=>({id:d.id,a:d.a,b:d.b,msgs:d.messages.length,
+          last:d.messages.length?d.messages[d.messages.length-1].ts:d.ts}))});
+    }
+    if(p==='/api/staff/dm/open'&&req.method==='POST'){
+      const t2=findUser(body.user);
+      if(!t2||rankOf(users[t2])<1)return bad(res,'No such staff member');
+      if(t2===me)return bad(res,'That would be a very quiet conversation');
+      /* the senior party is always "a" — that side gets the management actions */
+      const hi=rankOf(users[t2])>myRank?t2:me,lo=hi===me?t2:me;
+      let d=misc.dms.find(x=>x.a===hi&&x.b===lo);
+      if(!d){
+        d={id:misc.fseq++,a:hi,b:lo,ts:Date.now(),messages:[]};
+        misc.dms.unshift(d);
+        if(misc.dms.length>200)misc.dms.length=200;
+        saveS();
+        addNotif(t2,{type:'info',text:`🗨 ${me} opened a 1-on-1 channel with you`});
+      }
+      return json(res,200,{ok:1,id:d.id});
+    }
+    {
+      const d=misc.dms.find(x=>x.id===+((body&&body.id)||url.searchParams.get('id')));
+      const inDm=d&&(d.a===me||d.b===me||M.admin);
+      if(p==='/api/staff/dm'&&req.method==='GET'){
+        if(!inDm)return bad(res,'Channel not found',404);
+        return json(res,200,{dm:d,other:d.a===me?d.b:d.a,
+          otherRank:rankOf(users[d.a===me?d.b:d.a]||{}),myRank,rankNames:RANK_NAMES});
+      }
+      if(p==='/api/staff/dm/msg'&&req.method==='POST'){
+        if(!inDm)return bad(res,'Channel not found',404);
+        const text=String(body.text||'').trim().slice(0,600);
+        if(text.length<1)return bad(res,'Write a message first');
+        if(d.messages.length>=300)d.messages.shift();
+        d.messages.push({by:me,text,ts:Date.now()});saveS();
+        const other=d.a===me?d.b:d.a;
+        if(users[other])addNotif(other,{type:'info',text:`🗨 ${me} in your 1-on-1: "${text.slice(0,60)}${text.length>60?'…':''}"`});
+        return json(res,200,{ok:1,dm:d});
+      }
+    }
     const t=findUser(body.user);
     if(p==='/api/staff/recovery'&&req.method==='POST'){
       if(!t)return bad(res,'No such player');
@@ -1376,6 +1561,64 @@ try{
     return json(res,200,{rec});
   }
 
+  /* ================= dev containers ================= */
+  /* Developers build page/card changes in private "dev containers".
+     Nobody else sees them — not players, not staff. The admin can open any
+     container to preview it and, if happy, publish it to the live site. */
+  if(p.startsWith('/api/dev/')){
+    const DEV=M.dev||M.admin;
+    if(!DEV)return bad(res,'Developer accounts only',403);
+    const mine=c=>c.owner===me||M.admin;
+    if(p==='/api/dev/containers'&&req.method==='GET'){
+      return json(res,200,{containers:misc.containers.filter(mine)
+        .map(c=>({id:c.id,name:c.name,owner:c.owner,ts:c.ts,updated:c.updated,status:c.status||'draft',
+          cards:(c.pages.custom||[]).reduce((n,t)=>n+t.blocks.length,0)+
+                Object.values(c.pages.extends||{}).reduce((n,l)=>n+l.length,0),
+          tabs:(c.pages.custom||[]).length})),isAdmin:!!M.admin});
+    }
+    if(p==='/api/dev/container/create'&&req.method==='POST'){
+      if(misc.containers.filter(c=>c.owner===me).length>=10)return bad(res,'Container limit reached (10)');
+      const c={id:misc.fseq++,name:String(body.name||'untitled').slice(0,40),owner:me,
+        ts:Date.now(),updated:Date.now(),
+        pages:JSON.parse(JSON.stringify(misc.pages))};   /* fork of the live site */
+      misc.containers.push(c);saveS();
+      return json(res,200,{ok:1,id:c.id});
+    }
+    {
+      const c=misc.containers.find(x=>x.id===+((body&&body.id)||url.searchParams.get('id')));
+      if(p==='/api/dev/container'&&req.method==='GET'){
+        if(!c||!mine(c))return bad(res,'Container not found',404);
+        return json(res,200,{container:c});
+      }
+      if(p==='/api/dev/container/save'&&req.method==='POST'){
+        if(!c||!mine(c))return bad(res,'Container not found',404);
+        c.pages=sanitizePages(body.pages);
+        if(body.name)c.name=String(body.name).slice(0,40);
+        if(c.status==='submitted'&&!M.admin){c.status='draft';}  /* edits after submission need re-approval */
+        c.updated=Date.now();saveS();
+        return json(res,200,{ok:1,container:c});
+      }
+      if(p==='/api/dev/container/submit'&&req.method==='POST'){
+        if(!c||!mine(c))return bad(res,'Container not found',404);
+        if(c.status==='submitted')return bad(res,'Already awaiting approval');
+        c.status='submitted';c.submittedTs=Date.now();saveS();
+        notifyAdmins(`📤 Dev container "${c.name}" by ${c.owner} was submitted for approval — review it in the Dev Studio`);
+        return json(res,200,{ok:1});
+      }
+      if(p==='/api/dev/container/withdraw'&&req.method==='POST'){
+        if(!c||!mine(c))return bad(res,'Container not found',404);
+        c.status='draft';saveS();
+        return json(res,200,{ok:1});
+      }
+      if(p==='/api/dev/container/delete'&&req.method==='POST'){
+        if(!c||!mine(c))return bad(res,'Container not found',404);
+        misc.containers=misc.containers.filter(x=>x!==c);saveS();
+        return json(res,200,{ok:1});
+      }
+    }
+    return bad(res,'Unknown dev endpoint',404);
+  }
+
   /* ================= admin ================= */
   if(p.startsWith('/api/admin/')){
     if(!M.admin)return bad(res,'Admin only',403);
@@ -1394,7 +1637,7 @@ try{
         smtp:misc.smtp?{host:misc.smtp.host,user:misc.smtp.user,from:misc.smtp.from||misc.smtp.user}:null,
         mailLog:mailLog.slice(0,10),
         known:misc.knownIssues.filter(k=>k.status==='open').slice(0,10)},
-        users:players.map(pl=>({...pl,admin:users[pl.user].admin,staff:users[pl.user].staff,
+        users:players.map(pl=>({...pl,admin:users[pl.user].admin,staff:users[pl.user].staff,dev:!!users[pl.user].dev,
           banned:users[pl.user].banned||null,flagged:users[pl.user].flagged||null})),
         recent:Object.values(saved).sort((a,b)=>b.ended-a.ended).slice(0,15).map(r=>matchSummary(r)),
         support:misc.support.filter(s=>!s.done).slice(0,20)
@@ -1536,10 +1779,44 @@ try{
       const t=findUser(body.user);
       if(!t)return bad(res,'No such player');
       if(users[t].admin)return bad(res,'Admins already have full powers');
-      users[t].staff=!!body.staff;saveU();
+      users[t].staff=!!body.staff;
+      users[t].rank=body.staff?Math.max(users[t].rank||0,2):0;
+      if(!body.staff)users[t].manager=null;
+      saveU();
       addNotif(t,{type:'info',text:body.staff
         ?'🧰 You have been made STAFF — the Staff page is now in your side menu'
         :'Your staff role was removed'});
+      return json(res,200,{ok:1});
+    }
+    if(p==='/api/admin/container/reject'&&req.method==='POST'){
+      const c=misc.containers.find(x=>x.id===+body.id);
+      if(!c)return bad(res,'Container not found',404);
+      c.status='draft';saveS();
+      if(users[c.owner])addNotif(c.owner,{type:'info',
+        text:`📪 Your dev container "${c.name}" was not approved${body.reason?': "'+String(body.reason).slice(0,140)+'"':''} — it's back in draft, edit and resubmit any time`});
+      return json(res,200,{ok:1});
+    }
+    if(p==='/api/admin/container/publish'&&req.method==='POST'){
+      const c=misc.containers.find(x=>x.id===+body.id);
+      if(!c)return bad(res,'Container not found',404);
+      if((c.status||'draft')!=='submitted'&&c.owner!==me)
+        return bad(res,'This container has not been submitted for approval yet');
+      c.status='published';c.publishedTs=Date.now();
+      misc.pages=sanitizePages(c.pages);
+      misc.balV++;saveS();
+      if(users[c.owner]&&c.owner!==me)
+        addNotif(c.owner,{type:'info',text:`🚀 Your dev container "${c.name}" was published to the live site by ${me}`});
+      console.log('dev container',c.id,'('+c.name+') published by',me);
+      return json(res,200,{ok:1,pages:misc.pages});
+    }
+    if(p==='/api/admin/setdev'&&req.method==='POST'){
+      const t=findUser(body.user);
+      if(!t)return bad(res,'No such player');
+      if(users[t].admin)return bad(res,'Admins already have full powers');
+      users[t].dev=!!body.dev;saveU();
+      addNotif(t,{type:'info',text:body.dev
+        ?'🧪 You are now a DEVELOPER — the Dev Studio is in your side menu. Your work lives in private dev containers until the admin publishes it.'
+        :'Your developer role was removed'});
       return json(res,200,{ok:1});
     }
     if(p==='/api/admin/ban'&&req.method==='POST'){
@@ -1684,19 +1961,19 @@ try{
       const ev={n:m.events.length+1,by:side,type:String(body.type||'').slice(0,20),data:body.data??null};
       m.events.push(ev);m.last=Date.now();
       if(ev.type==='setup'){                    /* setup clocks */
-        if(side===0)m.wSetupTs=Date.now();      /* Black's 2 minutes start now */
+        if(side===0)m.wSetupTs=Date.now();      /* Black's 4 minutes start now */
         else m.setupDone=true;
       }
       metrics.eventsRelayed++;
       return json(res,200,{n:ev.n});
     }
     if(sub==='timeout'&&req.method==='POST'){
-      /* setup forfeit: 2 minutes per side to deploy, verified on the server clock */
+      /* setup forfeit: 4 minutes per side to deploy, verified on the server clock */
       if(m.status==='done')return json(res,200,{result:m.result});
       if(m.mode!=='setup'||m.setupDone)return bad(res,'No setup timeout to claim');
       const pending=m.wSetupTs?1:0;
       const t0=pending===0?m.started:m.wSetupTs;
-      if(Date.now()-t0<120e3)return bad(res,'They still have time on the setup clock');
+      if(Date.now()-t0<balRule('setupSecs',240)*1000)return bad(res,'They still have time on the setup clock');
       finalizeMatch(m,1-pending,pending);
       console.log('match',m.id,'setup timeout —',pending===0?m.host:m.guest,'forfeits');
       return json(res,200,{result:m.result});

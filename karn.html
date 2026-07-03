@@ -256,7 +256,7 @@ const GUNS={
 };
 const PNAME=['White','Black'];
 /* tunable game rules — the admin balance panel can override all of these */
-let RULES={actions:3,perPiece:2,armySize:8,maxPerType:4,snHeavyBonus:1,dgAhead:4,drawRound:150};
+let RULES={actions:3,perPiece:2,armySize:8,maxPerType:4,snHeavyBonus:1,dgAhead:4,drawRound:150,setupSecs:240,idleSecs:30,deviceLimit:5};
 const GUNS_DEF=JSON.parse(JSON.stringify(GUNS));
 const BASES_DEF=JSON.parse(JSON.stringify(BASES));
 const RULES_DEF=JSON.parse(JSON.stringify(RULES));
@@ -1203,16 +1203,16 @@ function renderSide(){
     const nw=pr?(pr.walls||[]).length:0,nu=pr?(pr.units||[]).length:0;
     const idle=Date.now()-(NET.lastOppActivity||Date.now());
     const stageTxt={mid:'choosing the centre walls',walls:'placing their walls',army:'building their army',place:'deploying their tanks'}[pr&&pr.stage]||'setting up';
-    const left=NET.oppSetupStart?Math.max(0,120-Math.floor((Date.now()-NET.oppSetupStart)/1000)):null;
+    const left=NET.oppSetupStart?Math.max(0,RULES.setupSecs-Math.floor((Date.now()-NET.oppSetupStart)/1000)):null;
     h=`<div class="panel"><h3>Online match</h3>
       <div style="font-size:14px;margin-bottom:8px">vs <b>${NET.oppName}</b> (${NET.players?NET.players[1-NET.side].elo:'?'})</div>
       <div class="thinking">${NET.oppName} is ${stageTxt}…</div>
-      ${left!=null?`<div style="font-size:13px;margin-top:8px">⏱ Setup clock: <b style="color:${left<=20?'var(--bad)':'var(--gold)'}">${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}</b> — overtime forfeits the match.</div>`:''}
+      ${left!=null?`<div style="font-size:13px;margin-top:8px">⏱ Setup clock: <b class="clk" style="color:${left<=20?'var(--bad)':'var(--gold)'}">${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}</b> — overtime forfeits the match.</div>`:''}
       <div class="hint" style="margin-top:10px">${pr
         ?`Their battle plan so far — <b>${nw} wall${nw===1?'':'s'}</b>, <b>${nu}/${RULES.armySize} units</b> — is shown greyed out on the board. Army edits reset the idle timer too.`
         :'Their setup will appear greyed out on the board as they build it.'}</div>
-      ${idle>30000?`
-      <div class="hint" style="color:var(--bad);margin-top:12px">⚠ No activity from ${NET.oppName} for ${Math.floor(idle/1000)}s.</div>
+      ${idle>RULES.idleSecs*1000?`
+      <div class="hint" style="color:var(--bad);margin-top:12px">⚠ No activity from ${NET.oppName} for <b class="clk">${Math.floor(idle/1000)}s</b>.</div>
       <button class="btn danger wide" style="margin-top:8px" onclick="uiAbort()">✕ Cancel match (no Elo change)</button>`:''}
     </div>`;
   }
@@ -1282,12 +1282,27 @@ function renderSide(){
     else h+=`<button class="btn gold wide" onclick="startNewGame()">⟳ New game</button>`;
   }
   if(G.mode==='online'&&['mid','walls','army','place'].includes(G.phase)&&NET.mySetupStart){
-    const left=Math.max(0,120-Math.floor((Date.now()-NET.mySetupStart)/1000));
+    const left=Math.max(0,RULES.setupSecs-Math.floor((Date.now()-NET.mySetupStart)/1000));
     h=`<div class="panel" style="border-color:${left<=20?'var(--bad)':'var(--line)'}">
-      <div style="font-size:13.5px">⏱ Your setup clock: <b style="color:${left<=20?'var(--bad)':'var(--gold)'}">${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}</b></div>
+      <div style="font-size:13.5px">⏱ Your setup clock: <b class="clk" style="color:${left<=20?'var(--bad)':'var(--gold)'}">${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}</b></div>
       <div class="hint" style="margin:4px 0 0">Finish deploying before it runs out — overtime forfeits the match.</div></div>`+h;
   }
+  /* Keep the DOM stable so the panel never bounces back to the top mid-scroll:
+     1. nothing changed -> don't touch the DOM at all
+     2. only the clock digits changed -> update just those text nodes in place
+     3. real change -> rebuild, then restore the scroll position */
+  const norm=h.replace(/(<b class="clk"[^>]*>)[^<]*/g,'$1');
+  if(sideEl.__h===norm){
+    const vals=[...h.matchAll(/<b class="clk"[^>]*>([^<]*)/g)].map(x=>x[1]);
+    [...sideEl.querySelectorAll('b.clk')].forEach((n,i)=>{if(vals[i]!=null&&n.textContent!==vals[i])n.textContent=vals[i];});
+    return;
+  }
+  sideEl.__h=norm;
+  const panels=()=>[sideEl,...sideEl.querySelectorAll('.panel')];
+  const scrolled=panels().map((n,i)=>[i,n.scrollTop]).filter(e=>e[1]>0);
   sideEl.innerHTML=h;
+  const after=panels();
+  for(const[i,top]of scrolled)if(after[i])after[i].scrollTop=top;
 }
 
 /* ================= INTERACTION ================= */
@@ -1676,8 +1691,9 @@ function uiCustomize(){
 
 /* ================= MODALS / MISC ================= */
 let modalDismiss=true;
-function showModal(html,dismissible){
+function showModal(html,dismissible,wide){
   modalCard.innerHTML=html;modalDismiss=dismissible!==false;
+  modalCard.style.maxWidth=wide?'min(1100px,96vw)':'';
   modalWrap.classList.remove('hidden');
 }
 function closeModal(){modalWrap.classList.add('hidden');}
@@ -2035,8 +2051,8 @@ async function pollMatch(){
   if(r.result&&!NET.resultShown){NET.resultShown=true;onlineGameOver(r.result);}
   if(G.phase==='waitsetup'||(G.mode==='online'&&['mid','walls','army','place'].includes(G.phase)))
     renderSide();                          /* keep clocks & counters ticking */
-  /* claim the setup forfeit when their 2 minutes are up */
-  if(G.phase==='waitsetup'&&NET.oppSetupStart&&!NET.toClaimed&&Date.now()-NET.oppSetupStart>123e3){
+  /* claim the setup forfeit when their 4 minutes are up */
+  if(G.phase==='waitsetup'&&NET.oppSetupStart&&!NET.toClaimed&&Date.now()-NET.oppSetupStart>(RULES.setupSecs+3)*1000){
     NET.toClaimed=true;
     api('/api/match/'+NET.match+'/timeout',{})
       .then(r2=>{if(!NET.resultShown){NET.resultShown=true;onlineGameOver(r2.result);}})
@@ -2090,7 +2106,7 @@ function applyRemote(ev){
     }
     else if(ev.type==='setup'){
       NET.oppProgress=null;NET.lastOppActivity=Date.now();
-      if(ev.by===0&&NET.side===1)NET.mySetupStart=Date.now();  /* my 2 minutes begin */
+      if(ev.by===0&&NET.side===1)NET.mySetupStart=Date.now();  /* my 4 minutes begin */
       applySetup(ev.by,ev.data);
     }
   }finally{NET.applying=false;}
@@ -2428,13 +2444,23 @@ function renderNav(){
     ${NET.token&&me.admin?`<button class="nbtn ${SITE.page==='admin'?'on':''}" onclick="showPage('admin')">🛡&nbsp; Admin</button>`:''}
     ${NET.token?`<button class="nbtn" onclick="showSupportHub()">🛟&nbsp; Support</button>`:''}
     <button class="nbtn ${SITE.page==='rules'?'on':''}" onclick="showPage('rules')">📖&nbsp; Rules</button>
-    ${(PAGES.custom||[]).filter(pageVisible).map(p=>`<button class="nbtn ${SITE.page==='c_'+p.id?'on':''}" onclick="showPage('c_${p.id}')">${p.icon}&nbsp; ${p.title.replace(/</g,'&lt;')}</button>`).join('')}
+    ${(PG().custom||[]).filter(pageVisible).map(p=>`<button class="nbtn ${SITE.page==='c_'+p.id?'on':''}" onclick="showPage('c_${p.id}')">${p.icon}&nbsp; ${p.title.replace(/</g,'&lt;')}</button>`).join('')}
+    ${isDev()?`<button class="nbtn ${SITE.page==='devstudio'?'on':''}" onclick="showPage('devstudio')">🧪&nbsp; Dev Studio</button>`:''}
     <div style="flex:1"></div>
     ${NET.token
       ?`<button class="nbtn" onclick="netLogout()">⏻&nbsp; Log out</button>`
       :`<button class="nbtn" onclick="showAuth()">🔑&nbsp; Log in</button>`}`;
+  let bn=document.getElementById('devcBanner');
+  if(DEVC.view){
+    if(!bn){bn=document.createElement('div');bn.id='devcBanner';document.body.appendChild(bn);}
+    bn.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:900;background:#241d10;border-top:2px solid var(--gold);color:var(--gold);font-size:12.5px;font-weight:700;padding:7px 14px;display:flex;gap:12px;align-items:center';
+    bn.innerHTML=`🧪 DEV CONTAINER: ${DEVC.name.replace(/</g,'&lt;')} — everything you're seeing is private to this container
+      <span style="flex:1"></span><button class="btn small" onclick="showPage('devstudio')">📦 Containers</button>
+      <button class="btn small danger" onclick="devcExit()">✕ Exit</button>`;
+  }else if(bn)bn.remove();
 }
 function renderPage(){
+  schedOverrides();
   if(SITE.page==='play')renderPlayPage();
   else if(SITE.page==='leaders')renderLeadersPage();
   else if(SITE.page==='profile')renderProfilePage();
@@ -2446,13 +2472,35 @@ function renderPage(){
   else if(SITE.page==='rules')renderRulesPage();
   else if(SITE.page==='balance')renderBalancePage();
   else if(SITE.page==='pagestudio')renderStudioPage();
+  else if(SITE.page==='devstudio')renderDevStudioPage();
+  else if(SITE.page==='devdocs')renderDevDocsPage();
   else if(SITE.page&&SITE.page.startsWith('c_'))renderCustomPage(SITE.page.slice(2));
 }
 /* ================= CUSTOM PAGES (admin-authored) ================= */
 let PAGES={custom:[],extends:{}};
+/* ---- dev containers: a private fork of all pages/cards. Only the owning
+   developer (and the admin, for preview) ever sees it. ---- */
+let DEVC={view:null,name:'',pages:null,owner:''};
+function PG(){return DEVC.view?DEVC.pages:PAGES;}
+function isDev(){return NET.profile&&(NET.profile.dev||NET.profile.admin);}
+function devcOpen(id){
+  api('/api/dev/container?id='+id).then(r=>{
+    DEVC={view:r.container.id,name:r.container.name,pages:r.container.pages,owner:r.container.owner};
+    renderNav();showPage('rules');
+    toast('🧪 Viewing dev container "'+DEVC.name+'" — players cannot see any of this');
+  }).catch(e=>toast(e.message));
+}
+function devcExit(){DEVC={view:null,name:'',pages:null,owner:''};renderNav();showPage('devstudio');}
+function devcPersist(msg){
+  api('/api/dev/container/save',{id:DEVC.view,pages:DEVC.pages}).then(r=>{
+    DEVC.pages=r.container.pages;renderNav();renderPage();
+    toast(msg||'💾 Saved to container — invisible to players until published');
+  }).catch(e=>toast(e.message));
+}
 function pageVisible(p){
   if(p.vis==='admin')return NET.profile&&NET.profile.admin;
   if(p.vis==='staff')return NET.profile&&(NET.profile.staff||NET.profile.admin);
+  if(p.vis==='dev')return isDev();
   if(p.vis==='users')return!!NET.token;
   return true;
 }
@@ -2469,22 +2517,30 @@ function expandSC(s){
         :'<div class="hint">The leaderboard appears here once you are logged in.</div>';
     });
 }
-function canEditPages(){return SITE.web&&NET.profile&&NET.profile.admin;}
+function canEditPages(){
+  if(!SITE.web||!NET.profile)return false;
+  if(DEVC.view)return NET.profile.admin||(NET.profile.dev&&DEVC.owner===NET.user);
+  return NET.profile.admin;   /* live site: admin only — devs work in containers */
+}
 function blockCardsHTML(list,ctx){
   const ed=canEditPages()&&ctx;
-  const cards=(list||[]).map((b,i)=>`<div class="card" style="margin-top:14px">
+  const cards=(list||[]).map((b,i)=>`<div class="card" data-cust="1" style="margin-top:14px">
     ${ed?`<span class="plink" style="float:right;font-size:12px;color:var(--dim)" onclick="editBlock('${ctx.type}','${ctx.key}',${i})">✏ edit</span>`:''}
+    ${b.code?'<span style="float:right;margin-right:10px;font-size:10px;color:var(--dim)" title="This card runs sandboxed JavaScript">⌨️ code</span>':''}
     ${b.title?`<h3>${b.title.replace(/</g,'&lt;')}</h3>`:''}
-    <div style="font-size:13.5px;line-height:1.65;color:#c9d8cf">${expandSC(b.body)}</div></div>`).join('');
+    ${b.body?`<div style="font-size:13.5px;line-height:1.65;color:#c9d8cf">${expandSC(b.body)}</div>`:''}
+    ${b.code?codeCardHTML(b,++__ccSeq):''}</div>`).join('');
   const add=ed?`<div style="margin-top:12px"><button class="btn small" onclick="addBlockIn('${ctx.type}','${ctx.key}')">➕ Add card here</button></div>`:'';
   return cards+add;
 }
 function blockListOf(type,key){
-  if(type==='ext'){PAGES.extends=PAGES.extends||{};PAGES.extends[key]=PAGES.extends[key]||[];return PAGES.extends[key];}
-  const p=(PAGES.custom||[]).find(x=>x.id===key);
+  const P=PG();
+  if(type==='ext'){P.extends=P.extends||{};P.extends[key]=P.extends[key]||[];return P.extends[key];}
+  const p=(P.custom||[]).find(x=>x.id===key);
   return p?p.blocks:null;
 }
 function pagesPersist(msg){
+  if(DEVC.view)return devcPersist(msg);
   api('/api/admin/pages',{pages:PAGES}).then(r=>{
     PAGES=r.pages;renderNav();renderPage();
     toast(msg||'💾 Saved — live for everyone on reload');
@@ -2501,37 +2557,383 @@ function editBlock(type,key,i){
   if(!list||!list[i])return;
   const b=list[i];
   showModal(`<h2 style="font-size:19px">✏ Edit card</h2>
-    <div class="sub">HTML + game embeds allowed: {{tank H,bg,1}} · {{comp sg}} · {{gundiag bg}} · {{leaderboard}}</div>
-    <input id="ebTitle" class="txt" placeholder="Card title (optional)" maxlength="60" value="${(b.title||'').replace(/"/g,'&quot;')}">
-    <textarea id="ebBody" class="txt" rows="7" style="resize:vertical">${(b.body||'').replace(/</g,'&lt;')}</textarea>
+    <div class="sub">HTML + game embeds allowed: {{tank H,bg,1}} · {{comp sg}} · {{gundiag bg}} · {{leaderboard}}. The right side is a live preview.</div>
+    <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
+      <div style="flex:1;min-width:300px">
+        <input id="ebTitle" class="txt" placeholder="Card title (optional)" maxlength="60" value="${(b.title||'').replace(/"/g,'&quot;')}">
+        <textarea id="ebBody" class="txt" rows="8" style="resize:vertical;font-family:ui-monospace,monospace;font-size:11.5px" placeholder="HTML content (optional if the card is pure code)">${(b.body||'').replace(/</g,'&lt;')}</textarea>
+        <div class="hint" style="margin:8px 0 4px">⌨️ JavaScript (optional) — runs sandboxed with the <b>KARN</b> API in scope (docs in the Dev Studio)</div>
+        <textarea id="ebCode" class="txt" rows="8" style="resize:vertical;font-family:ui-monospace,monospace;font-size:12px" placeholder="// e.g.  KARN.html('<b>Hello '+(KARN.me?KARN.me.user:'guest')+'</b>')">${(b.code||'').replace(/</g,'&lt;')}</textarea>
+        <div class="row" style="margin-top:4px"><span class="hint" style="margin:0">Code frame height (px)</span>
+          <input id="ebH" class="txt" style="margin:0;width:80px" type="number" min="80" max="900" value="${b.h||260}"></div>
+      </div>
+      <div style="flex:1;min-width:300px">
+        <div class="hint" style="margin:0 0 6px">👁 Live preview</div>
+        <div id="ebPrev" class="card" style="margin:0"></div>
+      </div>
+    </div>
     <div style="height:12px"></div>
     <div class="row">
       <button class="btn gold" onclick="editBlock2('${type}','${key}',${i})">💾 Save</button>
       <button class="btn danger" onclick="closeModal();blockListOf('${type}','${key}').splice(${i},1);pagesPersist('🗑 Card removed');">🗑 Delete card</button>
-      <span class="grow"></span><button class="btn" onclick="closeModal()">Cancel</button></div>`,true);
+      <span class="grow"></span><button class="btn" onclick="closeModal()">Cancel</button></div>`,true,true);
+  ebBindPreview();
+}
+let __ebT=null;
+function ebBindPreview(){
+  const upd=()=>{
+    const pv=document.getElementById('ebPrev');if(!pv)return;
+    const t=((document.getElementById('ebTitle')||{}).value||'');
+    const body=((document.getElementById('ebBody')||{}).value||'');
+    const code=((document.getElementById('ebCode')||{}).value||'').trim();
+    const h=+(((document.getElementById('ebH')||{}).value)||260);
+    pv.innerHTML=`${t?'<h3>'+t.replace(/</g,'&lt;')+'</h3>':''}
+      ${body?'<div style="font-size:13.5px;line-height:1.65;color:#c9d8cf">'+expandSC(body)+'</div>':''}
+      ${code?codeCardHTML({code,h},++__ccSeq):''}`;
+  };
+  const updSlow=()=>{clearTimeout(__ebT);__ebT=setTimeout(upd,500);}  /* code reruns after a pause in typing */
+  for(const[id,fast]of[['ebTitle',1],['ebBody',1],['ebCode',0],['ebH',0]]){
+    const e=document.getElementById(id);
+    if(e)e.addEventListener('input',fast?upd:updSlow);
+  }
+  upd();
 }
 function editBlock2(type,key,i){
   const list=blockListOf(type,key);
   if(!list||!list[i])return;
   list[i].title=(document.getElementById('ebTitle')||{}).value||'';
   list[i].body=(document.getElementById('ebBody')||{}).value||'';
+  const code=((document.getElementById('ebCode')||{}).value||'').trim();
+  if(code){list[i].code=code;list[i].h=+((document.getElementById('ebH')||{}).value||260);}
+  else{delete list[i].code;delete list[i].h;}
   closeModal();
   pagesPersist();
 }
 function renderCustomPage(id){
   const page=document.getElementById('page');
-  const p=(PAGES.custom||[]).find(x=>x.id===id);
+  const p=(PG().custom||[]).find(x=>x.id===id);
   if(!p||!pageVisible(p)){showPage('play');return;}
   page.innerHTML=`<h1 class="ptitle">${p.title.replace(/</g,'&lt;').toUpperCase()}</h1>
     ${blockCardsHTML(p.blocks,{type:'page',key:p.id})||'<div class="card"><div class="hint">Nothing here yet.</div></div>'}
     ${canEditPages()?`<div style="margin-top:12px"><button class="btn small" onclick="showPage('pagestudio')">🧩 Manage tabs in Page Studio</button></div>`:''}`;
 }
+function schedOverrides(){
+  const key=OVR_PREFIX[SITE.page]?SITE.page:null;
+  if(!key)return;
+  const run=()=>{
+    const pg2=document.getElementById('page');
+    if(!pg2||SITE.page!==key)return;
+    applyCardOverrides(pg2,key);
+    /* every tab can carry extra cards at the bottom — rules/play/leaders render
+       theirs inline, all other pages get them injected here */
+    if(!['rules','play','leaders'].includes(key)&&!document.getElementById('extWrap_'+key)){
+      const list=(PG().extends&&PG().extends[key])||[];
+      const html=blockCardsHTML(list,{type:'ext',key});
+      if(html){
+        const d=document.createElement('div');
+        d.id='extWrap_'+key;d.innerHTML=html;
+        pg2.appendChild(d);
+      }
+    }
+  };
+  setTimeout(run,0);setTimeout(run,400);setTimeout(run,1200);   /* async cards arrive late */
+}
+/* ---- built-in cards on ANY page: overridable + editable in place ----
+   Every card gets a stable key (rb0…= rules, pb0…= play, lb0…= leaders).
+   Overrides can retitle it, rewrite its body, bolt HTML on before/after,
+   or hide it. In a dev container this covers the whole website. ---- */
+const OVR_PREFIX={rules:'rb',play:'pb',leaders:'lb',profile:'pf',notifs:'nf',friends:'fd',staff:'sf',admin:'ad'};
+function applyCardOverrides(page,pageKey){
+  const ovr=(PG().overrides&&PG().overrides[pageKey])||{};
+  const pfx=OVR_PREFIX[pageKey]||pageKey;
+  const ed=canEditPages();
+  [...page.querySelectorAll('.card')].forEach((card,i)=>{
+    if(card.dataset.cust)return;   /* custom cards have their own ✏ */
+    if(card.dataset.ovr)return;card.dataset.ovr='1';   /* idempotent: async pages re-apply safely */
+    const key=pfx+i;
+    const o=ovr[key]||{};
+    if(o.hide){card.style.display='none';if(!ed)return;card.style.opacity=.35;card.style.display='';}
+    const h3=card.querySelector('h3');
+    if(o.title&&h3)h3.textContent=o.title;
+    if(o.body){
+      [...card.children].forEach(c=>{if(c!==h3)c.remove();});
+      const d=document.createElement('div');
+      d.style.cssText='font-size:13.5px;line-height:1.65;color:#c9d8cf';
+      d.innerHTML=expandSC(o.body);card.appendChild(d);
+    }
+    if(o.pre){const d=document.createElement('div');d.className='hint';d.style.cssText='border-left:3px solid var(--gold);padding-left:10px;margin-bottom:8px';d.innerHTML=expandSC(o.pre);card.insertBefore(d,h3?h3.nextSibling:card.firstChild);}
+    if(o.post){const d=document.createElement('div');d.className='hint';d.style.cssText='border-left:3px solid var(--gold);padding-left:10px;margin-top:8px';d.innerHTML=expandSC(o.post);card.appendChild(d);}
+    if(ed){
+      const btn=document.createElement('span');
+      btn.className='plink';btn.style.cssText='float:right;font-size:12px;color:var(--dim)';
+      btn.textContent=o.hide?'✏ edit (hidden)':'✏ edit';
+      btn.onclick=()=>editRuleCard(pageKey,key,card);
+      card.insertBefore(btn,card.firstChild);
+    }
+  });
+}
+function cardBodyHTML(card){
+  /* the card's current content, minus its title and the ✏ button — so edits
+     start from what is really there instead of a blank box */
+  const cl=card.cloneNode(true);
+  cl.querySelectorAll('.plink').forEach(n=>n.remove());
+  const h3=cl.querySelector('h3');if(h3)h3.remove();
+  return cl.innerHTML.trim();
+}
+function edBindPreview(srcIds,prevId,titleId){
+  /* live side-by-side preview: retypes render instantly */
+  const upd=()=>{
+    const pv=document.getElementById(prevId);if(!pv)return;
+    const t=titleId?((document.getElementById(titleId)||{}).value||''):'';
+    const pre=((document.getElementById(srcIds.pre)||{}).value||'');
+    const body=((document.getElementById(srcIds.body)||{}).value||'');
+    const post=((document.getElementById(srcIds.post)||{}).value||'');
+    pv.innerHTML=`${t?'<h3>'+t.replace(/</g,'&lt;')+'</h3>':''}
+      ${pre?'<div class="hint" style="border-left:3px solid var(--gold);padding-left:10px;margin-bottom:8px">'+expandSC(pre)+'</div>':''}
+      <div style="font-size:13.5px;line-height:1.65;color:#c9d8cf">${expandSC(body)}</div>
+      ${post?'<div class="hint" style="border-left:3px solid var(--gold);padding-left:10px;margin-top:8px">'+expandSC(post)+'</div>':''}`;
+  };
+  for(const k in srcIds){const e=document.getElementById(srcIds[k]);if(e)e.addEventListener('input',upd);}
+  if(titleId){const e=document.getElementById(titleId);if(e)e.addEventListener('input',upd);}
+  upd();
+}
+function editRuleCard(pageKey,key,card){
+  const P=PG();P.overrides=P.overrides||{};P.overrides[pageKey]=P.overrides[pageKey]||{};
+  const o=P.overrides[pageKey][key]||{};
+  const curTitle=o.title||(card.querySelector('h3')||{}).textContent||'';
+  const startBody=o.body||cardBodyHTML(card);   /* edit what's there, not a blank slate */
+  showModal(`<h2 style="font-size:19px">✏ Edit card <span style="color:var(--dim);font-size:13px">(${pageKey} · ${key})</span></h2>
+    <div class="sub">The card's current content is loaded below — change the bits you want. HTML + embeds ({{tank H,bg,1}} · {{comp sg}} · {{gundiag bg}} · {{leaderboard}}) allowed. The right side is a live preview.</div>
+    <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
+      <div style="flex:1;min-width:300px">
+        <input id="rcTitle" class="txt" placeholder="Title" maxlength="80" value="${(o.title||curTitle).replace(/"/g,'&quot;')}">
+        <textarea id="rcBody" class="txt" rows="12" style="resize:vertical;font-family:ui-monospace,monospace;font-size:11.5px" placeholder="Card body (HTML)">${startBody.replace(/</g,'&lt;')}</textarea>
+        <textarea id="rcPre" class="txt" rows="2" style="resize:vertical;font-family:ui-monospace,monospace;font-size:11.5px" placeholder="Extra HTML BEFORE the body (optional)">${(o.pre||'').replace(/</g,'&lt;')}</textarea>
+        <textarea id="rcPost" class="txt" rows="2" style="resize:vertical;font-family:ui-monospace,monospace;font-size:11.5px" placeholder="Extra HTML AFTER the body (optional)">${(o.post||'').replace(/</g,'&lt;')}</textarea>
+        <label class="row" style="margin-top:6px;gap:6px;cursor:pointer"><input id="rcHide" type="checkbox" ${o.hide?'checked':''}><span class="hint" style="margin:0">Hide this card from players</span></label>
+      </div>
+      <div style="flex:1;min-width:300px">
+        <div class="hint" style="margin:0 0 6px">👁 Live preview</div>
+        <div id="rcPrev" class="card" style="margin:0"></div>
+      </div>
+    </div>
+    <div style="height:12px"></div>
+    <div class="row">
+      <button class="btn gold" onclick="editRuleCard2('${pageKey}','${key}')">💾 Save</button>
+      <button class="btn danger" onclick="closeModal();delete PG().overrides['${pageKey}']['${key}'];pagesPersist('↺ Card restored to original');">↺ Restore original</button>
+      <span class="grow"></span><button class="btn" onclick="closeModal()">Cancel</button></div>`,true,true);
+  edBindPreview({body:'rcBody',pre:'rcPre',post:'rcPost'},'rcPrev','rcTitle');
+}
+function editRuleCard2(pageKey,key){
+  const v=id=>((document.getElementById(id)||{}).value||'').trim();
+  const o={title:v('rcTitle'),body:v('rcBody'),pre:v('rcPre'),post:v('rcPost'),
+    hide:(document.getElementById('rcHide')||{}).checked?1:0};
+  if(!o.title&&!o.body&&!o.pre&&!o.post&&!o.hide)delete PG().overrides[pageKey][key];
+  else PG().overrides[pageKey][key]=o;
+  closeModal();
+  pagesPersist();
+}
+
+/* ---- Dev Studio: containers + the KARN coding API ---- */
+function renderDevStudioPage(){
+  const page=document.getElementById('page');
+  if(!isDev()){showPage('play');return;}
+  page.innerHTML=`<h1 class="ptitle">DEV STUDIO</h1><div id="dsWrap"><div class="card"><div class="hint">Loading…</div></div></div>`;
+  api('/api/dev/containers').then(r=>{
+    if(SITE.page!=='devstudio')return;
+    const el=document.getElementById('dsWrap');if(!el)return;
+    const isAdm=r.isAdmin;
+    el.innerHTML=`
+    <div class="hint" style="margin:-8px 0 12px">A <b>dev container</b> is your private copy of every page, card and rule card. Players, staff — nobody sees it.
+      Edit freely inside it${isAdm?'; submitted containers await your approval — preview first, then approve & publish':' — when it\'s ready, 📤 submit it for approval. The admin previews it and approves (publishes) or rejects it with a note'}.</div>
+    ${DEVC.view?`<div class="card" style="border-color:var(--gold);margin-bottom:14px">
+      <b>🧪 Currently viewing: ${DEVC.name.replace(/</g,'&lt;')}</b>
+      <div class="hint" style="margin:4px 0 8px">Everything you see in the side tabs and Rules/Play pages is this container's version. Edit cards in place (✏) or through the Page Studio.</div>
+      <div class="row"><button class="btn small" onclick="showPage('pagestudio')">🧩 Page Studio</button>
+      <button class="btn small" onclick="showPage('rules')">📖 View rules cards</button>
+      <button class="btn small danger" onclick="devcExit()">✕ Exit container view</button></div></div>`:''}
+    <div class="row" style="margin-bottom:14px"><button class="btn gold" onclick="showPage('devdocs')">📚 Open the Dev Toolkit tutorial — learn every feature</button></div>
+    <div class="card"><h3>📦 ${isAdm?'All dev containers':'Your dev containers'}</h3>
+      ${(r.containers||[]).length?r.containers.map(c=>`<div class="lobrow" style="${c.status==='submitted'?'border:1px solid var(--gold);border-radius:9px;padding:8px':''}">
+        <span class="grow"><b>${c.name.replace(/</g,'&lt;')}</b>
+          ${c.status==='submitted'?'<span class="tag warn" style="margin-left:6px">⏳ AWAITING APPROVAL</span>':c.status==='published'?'<span class="tag ok" style="margin-left:6px">🚀 PUBLISHED</span>':''}
+          <div class="hint" style="margin:2px 0 0">by ${c.owner} · ${c.tabs} tab(s), ${c.cards} card(s) · updated ${new Date(c.updated||c.ts).toLocaleDateString()}</div></span>
+        <button class="btn small ${DEVC.view===c.id?'':'gold'}" onclick="devcOpen(${c.id})">${DEVC.view===c.id?'Reopen':'Open'}</button>
+        ${!isAdm&&c.status!=='submitted'?`<button class="btn small" title="Send to the admin for approval" onclick="devcSubmit(${c.id})">📤 Submit</button>`:''}
+        ${!isAdm&&c.status==='submitted'?`<button class="btn small" onclick="api('/api/dev/container/withdraw',{id:${c.id}}).then(()=>{toast('Withdrawn — back to draft');renderPage();})">↩ Withdraw</button>`:''}
+        ${isAdm&&c.status==='submitted'?`<button class="btn small gold" title="Approve & publish to the live site" onclick="devcPublish(${c.id},'${c.name.replace(/'/g,'')}')">✓ Approve & publish</button>
+          <button class="btn small danger" onclick="devcReject(${c.id},'${c.name.replace(/'/g,'')}')">✕ Reject</button>`:''}
+        ${isAdm&&c.status!=='submitted'?`<button class="btn small" title="Publish (admin's own containers can skip approval)" onclick="devcPublish(${c.id},'${c.name.replace(/'/g,'')}')">🚀 Publish</button>`:''}
+        <button class="btn small danger" onclick="devcDelete(${c.id})">🗑</button></div>`).join('')
+      :'<div class="hint">No containers yet — create one below.</div>'}
+      <div class="row" style="margin-top:10px">
+        <input id="dcName" class="txt" style="margin:0" placeholder="Container name (e.g. new-weapons-page)" maxlength="40">
+        <button class="btn gold" onclick="devcCreate()">➕ New container</button></div>
+      <div class="hint" style="margin-top:6px">A new container starts as an exact copy of the live site.</div></div>
+    <div class="card" style="margin-top:14px"><h3>⌨️ The KARN coding API</h3>
+      <div class="hint" style="line-height:1.7">Any card can carry <b>JavaScript</b> — plain, industry-standard JS, no framework to learn. Your code runs in a sandboxed frame with a <b>KARN</b> object already in scope:</div>
+      <pre style="background:#0d1512;border:1px solid var(--line);border-radius:9px;padding:12px;font-size:11.5px;line-height:1.6;overflow-x:auto;color:#a8e0c0">KARN.rules        // live game rules   {actions, armySize, setupSecs, …}
+KARN.guns         // every weapon      {sg:{name,ap,rng,dmg,…}, …}
+KARN.bases        // tank classes      {L:{name,spd,hp,ap}, …}
+KARN.me           // your player       {user, elo, wins, losses, theme} or null
+KARN.players      // top-10 leaderboard [{user, elo, wins, …}]
+KARN.html(str)    // render HTML into your card
+KARN.el(tag,attrs,text) // build an element, returns it (auto-appended)
+KARN.height(px)   // set your card's height (default 260)</pre>
+      <div class="hint" style="margin-top:8px;line-height:1.7">Example — a card that lists every weapon sorted by damage:</div>
+      <pre style="background:#0d1512;border:1px solid var(--line);border-radius:9px;padding:12px;font-size:11.5px;line-height:1.6;overflow-x:auto;color:#c9d8cf">const rows = Object.entries(KARN.guns)
+  .sort((a,b) => b[1].dmg - a[1].dmg)
+  .map(([id,g]) => '&lt;tr&gt;&lt;td&gt;'+g.name+'&lt;/td&gt;&lt;td&gt;'+g.dmg+'&lt;/td&gt;&lt;td&gt;'+g.rng+'&lt;/td&gt;&lt;/tr&gt;');
+KARN.html('&lt;table&gt;&lt;tr&gt;&lt;th&gt;Weapon&lt;/th&gt;&lt;th&gt;Dmg&lt;/th&gt;&lt;th&gt;Range&lt;/th&gt;&lt;/tr&gt;'+rows.join('')+'&lt;/table&gt;');</pre>
+      <div class="hint" style="margin-top:8px">Add code to any card via its ✏ editor (inside a container) — the ⌨️ code box below the HTML box. Errors show inside the card, never crash the site. Code cards are sandboxed: no access to accounts, sessions or the server.</div></div>`;
+  }).catch(e=>toast(e.message));
+}
+function devcCreate(){
+  const name=((document.getElementById('dcName')||{}).value||'').trim();
+  if(!name){toast('Give the container a name');return;}
+  api('/api/dev/container/create',{name}).then(r=>{toast('📦 Container created');devcOpen(r.id);}).catch(e=>toast(e.message));
+}
+function devcDelete(id){
+  showModal(`<h2 style="font-size:18px">Delete this container?</h2>
+    <div class="sub">All its unpublished work is lost. The live site is not affected.</div>
+    <div class="row"><button class="btn danger" onclick="closeModal();api('/api/dev/container/delete',{id:${id}}).then(()=>{if(DEVC.view===${id})devcExit();renderPage();toast('🗑 Container deleted');}).catch(e=>toast(e.message))">🗑 Delete</button>
+    <span class="grow"></span><button class="btn" onclick="closeModal()">Cancel</button></div>`,true);
+}
+function devcSubmit(id){
+  showModal(`<h2 style="font-size:18px">📤 Submit for approval?</h2>
+    <div class="sub">The admin will be notified and can preview your container exactly as players would see it. Nothing goes live until they approve. Editing the container after submitting sends it back to draft.</div>
+    <div class="row"><button class="btn gold" onclick="closeModal();api('/api/dev/container/submit',{id:${id}}).then(()=>{toast('📤 Sent to the admin for approval');renderPage();}).catch(e=>toast(e.message))">📤 Submit</button>
+    <span class="grow"></span><button class="btn" onclick="closeModal()">Cancel</button></div>`,true);
+}
+function devcReject(id,name){
+  showModal(`<h2 style="font-size:18px">✕ Reject "${name}"?</h2>
+    <div class="sub">It goes back to draft and the developer is notified — with your note, if you leave one.</div>
+    <input id="rejReason" class="txt" placeholder="Reason (optional, shown to the developer)" maxlength="140">
+    <div class="row" style="margin-top:12px"><button class="btn danger" onclick="closeModal();api('/api/admin/container/reject',{id:${id},reason:(document.getElementById('rejReason')||{}).value||''}).then(()=>{toast('Rejected — developer notified');renderPage();}).catch(e=>toast(e.message))">✕ Reject</button>
+    <span class="grow"></span><button class="btn" onclick="closeModal()">Cancel</button></div>`,true);
+}
+function devcPublish(id,name){
+  showModal(`<h2 style="font-size:18px">🚀 Publish "${name}"?</h2>
+    <div class="sub">The container's pages and cards replace the LIVE site for every player on their next reload. This cannot be previewed away afterwards — consider opening it first to check.</div>
+    <div class="row"><button class="btn gold" onclick="closeModal();api('/api/admin/container/publish',{id:${id}}).then(r=>{PAGES=r.pages;devcExit();renderNav();renderPage();toast('🚀 Published — live for everyone');}).catch(e=>toast(e.message))">🚀 Publish to live</button>
+    <span class="grow"></span><button class="btn" onclick="closeModal()">Cancel</button></div>`,true);
+}
+/* ---- Dev Toolkit tutorial ---- */
+function renderDevDocsPage(){
+  const page=document.getElementById('page');
+  if(!isDev()){showPage('play');return;}
+  const pre=t=>`<pre style="background:#0d1512;border:1px solid var(--line);border-radius:9px;padding:12px;font-size:11.5px;line-height:1.6;overflow-x:auto;color:#c9d8cf">${t}</pre>`;
+  const sec=(icon,title,body)=>`<div class="card" style="margin-top:14px"><h3>${icon} ${title}</h3><div style="font-size:13px;line-height:1.7;color:#c9d8cf">${body}</div></div>`;
+  page.innerHTML=`<h1 class="ptitle">DEV TOOLKIT — THE FULL TOUR</h1>
+  <div class="hint" style="margin:-8px 0 4px">Everything a developer can do, in the order you'll use it. Ten minutes and you know the whole toolkit.</div>
+  <div class="row" style="margin:10px 0"><button class="btn" onclick="showPage('devstudio')">← Back to Dev Studio</button></div>
+
+  ${sec('📦','1 · Containers — your private copy of the site',`
+    Create a container in the Dev Studio and it becomes an exact fork of the live website: every tab, card and rule card.
+    Open it and a gold banner appears — from then on, <b>everything you see and edit is your container</b>. Players, staff, even other devs see nothing.
+    <br><br>The lifecycle: <b>draft → 📤 submit → admin previews → ✓ publish</b> (or ✕ reject with a note, back to draft).
+    Editing after submitting returns it to draft automatically, so what gets approved is exactly what goes live.`)}
+
+  ${sec('✏','2 · Edit any card, anywhere',`
+    Inside a container, every card on <b>every page</b> — Rules, Play, Leaderboard, Profile, Notifications, Friends, Staff, Admin — grows an ✏ button.
+    The editor opens <b>with the card's current content loaded</b>, so you tweak the bits you want rather than starting over.
+    Left side: source. Right side: <b>live preview</b> that re-renders as you type.
+    <br><br>Each card offers: replace the <b>title</b>, rewrite the <b>body</b>, add HTML <b>before/after</b> the original, or <b>hide</b> it from players.
+    “↺ Restore original” always undoes everything for that card.`)}
+
+  ${sec('➕','3 · Add new cards & whole tabs',`
+    Every tab has an “➕ Add card here” button at the bottom — new cards land on that page for everyone once published.
+    Want an entirely new side tab? Open the <b>🧩 Page Studio</b> (button in Dev Studio): create tabs with an icon, title and visibility
+    (everyone · logged-in · staff · admin · developers), reorder them, and fill them with cards.`)}
+
+  ${sec('🧩','4 · Live game embeds',`
+    Any card body understands these shortcodes — they render real game assets, always up to date with the current balance:
+    ${pre(`{{tank H,bg,1}}     a Heavy with a Big Gun and 1 armour (any base L/M/H, any gun id, 0-3 armour)
+{{comp sg}}         a component card (sg, bg, sn, ds, dg, ar, bo)
+{{gundiag bg}}      a live firing-range diagram for that weapon
+{{leaderboard}}     the current top-10 table`)}
+    Embeds work in card bodies, rule-card overrides, and the before/after boxes.`)}
+
+  ${sec('⌨️','5 · Code cards — the KARN JavaScript API',`
+    Add JavaScript to any card via the ⌨️ box in its editor. It's plain, industry-standard JS — the only thing to learn is one API object:
+    ${pre(`KARN.rules      // live game rules    {actions, armySize, setupSecs, …}
+KARN.guns       // every weapon       {sg:{name,ap,rng,dmg,arc,…}, …}
+KARN.bases      // tank classes       {L:{name,spd,hp,ap}, M:…, H:…}
+KARN.me         // viewing player     {user, elo, wins, losses, theme} or null
+KARN.players    // top-10 leaderboard [{user, elo, wins, …}, …]
+KARN.html(str)  // render HTML into the card
+KARN.el(tag, attrs, text)  // build + append an element, returns it
+KARN.height(px) // resize your card's frame (default 260)`)}
+    <b>Worked example 1 — greet the player:</b>
+    ${pre(`KARN.html('&lt;h2&gt;Welcome, ' + (KARN.me ? KARN.me.user : 'guest') + '!&lt;/h2&gt;');`)}
+    <b>Worked example 2 — weapon table sorted by damage:</b>
+    ${pre(`const rows = Object.entries(KARN.guns)
+  .sort((a,b) =&gt; b[1].dmg - a[1].dmg)
+  .map(([id,g]) =&gt; '&lt;tr&gt;&lt;td&gt;'+g.name+'&lt;/td&gt;&lt;td&gt;'+g.dmg+'&lt;/td&gt;&lt;td&gt;'+g.rng+'&lt;/td&gt;&lt;/tr&gt;');
+KARN.html('&lt;table&gt;&lt;tr&gt;&lt;th&gt;Weapon&lt;/th&gt;&lt;th&gt;Dmg&lt;/th&gt;&lt;th&gt;Range&lt;/th&gt;&lt;/tr&gt;' + rows.join('') + '&lt;/table&gt;');`)}
+    <b>Worked example 3 — interactive damage calculator:</b>
+    ${pre(`KARN.html('&lt;b&gt;Shots to kill a Heavy:&lt;/b&gt; &lt;select id=g&gt;&lt;/select&gt; &lt;span id=out&gt;&lt;/span&gt;');
+const sel = document.getElementById('g'), out = document.getElementById('out');
+for (const id in KARN.guns) sel.add(new Option(KARN.guns[id].name, id));
+function calc(){
+  const dmg = KARN.guns[sel.value].dmg || 1;
+  out.textContent = Math.ceil(KARN.bases.H.hp / dmg) + ' shot(s)';
+}
+sel.onchange = calc; calc();`)}
+    Code runs in a <b>sandbox</b>: no access to accounts, tokens or the server — errors appear inside the card and never break the site.
+    Typing pauses for half a second? The preview re-runs your code automatically.`)}
+
+  ${sec('🚀','6 · Getting it live',`
+    When the container looks right, hit <b>📤 Submit</b> in the Dev Studio. The admin gets notified, previews your container
+    exactly as players would see it, and either <b>✓ approves</b> (it replaces the live site) or <b>✕ rejects</b> with a note.
+    You'll get a notification either way — rejected work drops back to draft so you can revise and resubmit.`)}
+
+  ${sec('💡','7 · Tips & limits',`
+    • Card bodies max 5,000 characters; code max 20,000; up to 16 cards per list, 8 custom tabs, 10 containers each.<br>
+    • Code frames default to 260px — set a height in the editor or call <b>KARN.height(px)</b> from code.<br>
+    • The ✏ button on functional cards (staff tools, admin panels) edits their shell — replacing the body removes the working controls, which is fine for redesign previews; ↺ restores them.<br>
+    • Hidden cards stay visible to editors at 35% opacity so you can find and restore them.<br>
+    • Everything here also works for the admin directly on the live site — but containers + approval are the safe road.`)}`;
+}
+/* ---- sandboxed code cards ---- */
+function codeCardHTML(b,seq){
+  const snap=JSON.stringify({rules:RULES,guns:GUNS,bases:BASES,
+    me:NET.profile?{user:NET.profile.user,elo:NET.profile.elo,wins:NET.profile.wins,losses:NET.profile.losses,theme:UI.theme}:null,
+    players:(NET.lobby&&NET.lobby.players)||[]}).replace(/</g,'\\u003c');
+  const doc=`<!doctype html><html><head><style>
+    body{margin:0;padding:10px;font-family:system-ui,sans-serif;font-size:13px;line-height:1.55;color:#c9d8cf;background:transparent}
+    table{border-collapse:collapse;width:100%}td,th{border:1px solid #2a3a30;padding:4px 8px;text-align:left}
+    th{color:#e8b33e}a{color:#7fd4a8}</style></head><body><script>
+    const __D=${snap};
+    const KARN={rules:__D.rules,guns:__D.guns,bases:__D.bases,me:__D.me,players:__D.players,
+      html:h=>{document.body.innerHTML=h;},
+      el:(t,a,x)=>{const e=document.createElement(t);for(const k in(a||{}))e.setAttribute(k,a[k]);if(x!=null)e.textContent=x;document.body.appendChild(e);return e;},
+      height:px=>parent.postMessage({karnH:Math.max(60,Math.min(900,+px||260)),seq:${seq}},'*')};
+    window.onerror=(m,src,l)=>{document.body.innerHTML='<pre style=\"color:#e05f4e;white-space:pre-wrap\">⚠ '+m+(l?' (line '+l+')':'')+'</pre>';return true;};
+    <\/script><script>${String(b.code||'').replace(/<\/script/gi,'<\\/script')}<\/script></body></html>`;
+  return `<iframe class="codecard" data-seq="${seq}" sandbox="allow-scripts"
+    style="width:100%;height:${b.h||260}px;border:0;border-radius:8px;background:#0d1512"
+    srcdoc="${doc.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}"></iframe>`;
+}
+let __ccSeq=0;
+window.addEventListener('message',ev=>{
+  const d=ev.data;
+  if(!d||!d.karnH)return;
+  const f=document.querySelector('iframe.codecard[data-seq="'+d.seq+'"]');
+  if(f)f.style.height=d.karnH+'px';
+});
+
 /* ---- Page Studio (admin) ---- */
 let PST=null;
 function renderStudioPage(){
   const page=document.getElementById('page');
-  if(!NET.profile||!NET.profile.admin){showPage('play');return;}
-  page.innerHTML=`<h1 class="ptitle">PAGE STUDIO</h1><div id="psWrap"><div class="card"><div class="hint">Loading…</div></div></div>`;
+  if(!canEditPages()){showPage('play');return;}
+  page.innerHTML=`<h1 class="ptitle">PAGE STUDIO${DEVC.view?' <span style="font-size:14px;color:var(--gold)">🧪 container: '+DEVC.name.replace(/</g,'&lt;')+'</span>':''}</h1>
+    <div id="psWrap"><div class="card"><div class="hint">Loading…</div></div></div>`;
+  if(DEVC.view){
+    PST=DEVC.pages;PST.custom=PST.custom||[];PST.extends=PST.extends||{};
+    renderStudioForm();return;
+  }
   api('/api/pages').then(r=>{
     if(SITE.page!=='pagestudio')return;
     PST=r.pages||{custom:[],extends:{}};
@@ -2559,7 +2961,7 @@ function renderStudioForm(){
       <input id="ps_p${i}_icon" class="txt" style="margin:0;width:52px;text-align:center" maxlength="4" value="${p.icon||'📄'}">
       <input id="ps_p${i}_title" class="txt" style="margin:0;width:140px" maxlength="20" value="${(p.title||'').replace(/"/g,'&quot;')}">
       <select id="ps_p${i}_vis" class="txt" style="margin:0;width:130px">
-        ${['all','users','staff','admin'].map(v=>`<option value="${v}" ${p.vis===v?'selected':''}>${{all:'everyone',users:'logged in',staff:'staff only',admin:'admin only'}[v]}</option>`).join('')}
+        ${['all','users','staff','admin','dev'].map(v=>`<option value="${v}" ${p.vis===v?'selected':''}>${{all:'everyone',users:'logged in',staff:'staff only',admin:'admin only',dev:'developers only'}[v]}</option>`).join('')}
       </select>
       <span class="hint" style="margin:0">/${p.id}</span>
       <span class="grow"></span>
@@ -2613,6 +3015,15 @@ function psAddExt(k){psCollect();PST.extends[k]=PST.extends[k]||[];PST.extends[k
 function psDelExt(k,j){psCollect();PST.extends[k].splice(j,1);renderStudioForm();}
 function psSave(){
   psCollect();
+  if(DEVC.view){
+    api('/api/dev/container/save',{id:DEVC.view,pages:PST}).then(r=>{
+      DEVC.pages=r.container.pages;PST=DEVC.pages;
+      renderNav();
+      toast('💾 Saved to container "'+DEVC.name+'" — invisible to players');
+      renderStudioForm();
+    }).catch(e=>toast(e.message));
+    return;
+  }
   api('/api/admin/pages',{pages:PST}).then(r=>{
     PAGES=r.pages;
     renderNav();
@@ -2629,7 +3040,7 @@ function renderBalancePage(){
   api('/api/balance').then(r=>{
     if(SITE.page!=='balance')return;
     const src=r.balance||{};
-    BAL={bases:{},guns:{},rules:Object.assign({},RULES_DEF,src.rules||{})};
+    BAL={bases:{},guns:{},rules:Object.assign({eloK:32},RULES_DEF,src.rules||{})};
     for(const k of['L','M','H'])BAL.bases[k]=Object.assign({},BASES_DEF[k],(src.bases||{})[k]||{});
     const gsrc=src.guns||GUNS_DEF;
     for(const id in gsrc)BAL.guns[id]=Object.assign({},GUNS_DEF[id]||{},gsrc[id]);
@@ -2676,6 +3087,12 @@ function renderBalForm(){
         ['snHeavyBonus','Sniper bonus vs Heavy'],['dgAhead','Dirt Gun ahead dmg'],['eloK','Elo K-factor'],['drawRound','Draw at round']]
        .map(([k,l])=>`<div style="text-align:center"><div class="hint" style="margin:0 0 4px">${l}</div>${balInp('br_'+k,BAL.rules[k],64)}</div>`).join('')}
     </div></div>
+  <div class="card" style="margin-top:14px"><h3>⏱ Timings & limits</h3>
+    <div class="row wrap" style="gap:14px">
+     ${[['setupSecs','Setup clock (seconds / side)',900],['idleSecs','Idle-cancel warning (seconds)',300],['deviceLimit','Accounts per device',50]]
+       .map(([k,l,mx])=>`<div style="text-align:center"><div class="hint" style="margin:0 0 4px">${l}</div>${balInp('br_'+k,BAL.rules[k],mx)}</div>`).join('')}
+    </div>
+    <div class="hint" style="margin-top:8px">Setup clock is enforced by the server; the idle warning is when the "cancel match" option appears while an opponent is inactive during setup. Device limit caps account creation per device (never per network, so families are unaffected).</div></div>
   <div class="row" style="margin-top:14px">
     <button class="btn gold" onclick="balSave()">💾 Save balance</button>
     <button class="btn danger" onclick="balReset()">↺ Reset everything to defaults</button>
@@ -2730,8 +3147,24 @@ function renderStaffPage(){
   const page=document.getElementById('page');
   if(!NET.profile||(!NET.profile.staff&&!NET.profile.admin)){showPage('play');return;}
   page.innerHTML=`<h1 class="ptitle">STAFF TOOLS</h1>
-   <div class="hint" style="margin:-8px 0 12px">Staff can reset passwords and tag accounts. Only the <b>admin</b> can ban or modify accounts.</div>
+   <div class="hint" style="margin:-8px 0 12px">Staff can reset passwords and tag accounts. Only the <b>admin</b> can ban or modify accounts.
+     Rank badge: ${'🎖'.repeat(Math.max(1,(NET.profile.rank||2)))} <b>${RANKN[NET.profile.rank||2]}</b></div>
+   <div class="card" style="margin-bottom:14px"><h3>👥 The team — chain of command</h3><div id="stTeam"><div class="hint">Loading…</div></div></div>
    <div class="cards">
+    <div class="card"><h3>🏛 Team room — meetings & decisions</h3>
+      <div class="hint" style="margin-bottom:6px">More than a chat: every meeting has an agenda, votes, and recorded decisions the whole team can look back on.</div>
+      <div id="stMeetings"><div class="hint">Loading…</div></div>
+      <div class="row" style="margin-top:10px">
+        <input id="mtTitle" class="txt" style="margin:0" placeholder="Meeting title" maxlength="80">
+        ${(NET.profile.rank||2)>=3||NET.profile.admin?`<select id="mtMin" class="txt" style="margin:0;width:auto">
+          <option value="1">Everyone</option><option value="2">Staff+</option><option value="3">Leads+</option><option value="4">Managers+</option></select>`:''}
+        <button class="btn gold" onclick="mtCreate()">🏛 Open meeting</button></div></div>
+    <div class="card"><h3>🗨 1-on-1 channels</h3>
+      <div class="hint" style="margin-bottom:6px">A private line between you and one team member. Senior side gets management actions — promote, demote, assign reports — right in the conversation.</div>
+      <div id="stDms"><div class="hint">Loading…</div></div>
+      <div class="row" style="margin-top:10px">
+        <input id="dmUser" class="txt" style="margin:0" placeholder="Staff username" maxlength="16" spellcheck="false">
+        <button class="btn" onclick="dmOpenByName()">🗨 Open channel</button></div></div>
     <div class="card"><h3>🔑 Account recovery code</h3>
       <div class="hint" style="margin-bottom:6px">Creates a one-time code (valid 30 minutes). Give it to the player — they click “Account recovery” on the login screen, enter it, and choose a new password or username.</div>
       <input id="stUser1" class="txt" placeholder="Username" maxlength="16" spellcheck="false">
@@ -2769,6 +3202,156 @@ function renderStaffPage(){
       ${t.status==='open'?`<button class="btn small" onclick="api('/api/staff/ticket/close',{id:${t.id}}).then(()=>{toast('Closed');renderPage();})">✓</button>`:''}</div>`).join('')
       :'<div class="hint">No tickets yet.</div>';
   }).catch(()=>{});
+  stLoadTeam();stLoadMeetings();stLoadDms();
+}
+/* ---- staff structure: roster, meetings, 1-on-1s ---- */
+const RANKN=['Player','Trainee','Staff','Team Lead','Manager','Admin'];
+const RANKI=['','🌱','🧰','⭐','👑','⚡'];
+function stLoadTeam(){
+  api('/api/staff/team').then(r=>{
+    const el=document.getElementById('stTeam');if(!el)return;
+    const my=r.myRank;
+    el.innerHTML=`<div class="hint" style="margin-bottom:8px">Chain of command: <b>Admin → Manager → Team Lead → Staff → Trainee</b>. Leads and above can promote, demote and assign reports — always only below their own rank.</div>`+
+      r.team.map(u=>{
+        const canManage=(my>u.rank&&my>=3)||NET.profile.admin;
+        return `<div class="lobrow">
+        <span class="grow"><b class="plink" onclick="viewUser('${u.user}')">${u.user}</b>
+          <span class="tag ${u.rank>=4?'warn':u.rank>=3?'ok':''}" style="margin-left:6px">${RANKI[u.rank]} ${RANKN[u.rank].toUpperCase()}</span>
+          ${u.dev?'<span class="tag">🧪 DEV</span>':''}
+          <div class="hint" style="margin:2px 0 0">${u.manager?'reports to <b>'+u.manager+'</b>':u.rank<5?'no direct manager':''}${u.reports?' · '+u.reports+' direct report'+(u.reports===1?'':'s'):''}</div></span>
+        ${u.user!==NET.user?`<button class="btn small" title="Open a private 1-on-1 channel" onclick="dmOpen('${u.user}')">🗨 1-on-1</button>`:''}
+        ${canManage&&(NET.profile.admin?u.rank<4:u.rank+1<my)?`<button class="btn small gold" title="Promote to ${RANKN[u.rank+1]}" onclick="stRank('${u.user}',${u.rank+1})">⬆</button>`:''}
+        ${canManage&&u.rank>1?`<button class="btn small" title="Demote to ${RANKN[u.rank-1]}" onclick="stRank('${u.user}',${u.rank-1})">⬇</button>`:''}
+        ${canManage?`<button class="btn small danger" title="Remove from staff" onclick="stRank('${u.user}',0)">✕</button>`:''}
+        ${canManage?`<button class="btn small" title="Assign who they report to" onclick="stSetMgr('${u.user}')">🧭</button>`:''}
+      </div>`;}).join('');
+  }).catch(()=>{});
+}
+function stRank(user,rank){
+  const verb=rank===0?'remove '+user+' from the staff team':'move '+user+' to '+RANKN[rank];
+  showModal(`<h2 style="font-size:18px">${rank===0?'✕':'🎖'} Confirm</h2>
+    <div class="sub">You are about to ${verb}. They'll be notified${rank!==0?' (and emailed if linked)':''}.</div>
+    <div class="row"><button class="btn ${rank===0?'danger':'gold'}" onclick="closeModal();api('/api/staff/setrank',{user:'${user}',rank:${rank}}).then(()=>{toast('Done — they have been notified');stLoadTeam();}).catch(e=>toast(e.message))">Confirm</button>
+    <span class="grow"></span><button class="btn" onclick="closeModal()">Cancel</button></div>`,true);
+}
+function stSetMgr(user){
+  showModal(`<h2 style="font-size:18px">🧭 Who does ${user} report to?</h2>
+    <div class="sub">Their manager must outrank them. Leave empty to clear.</div>
+    <input id="mgName" class="txt" placeholder="Manager's username (empty = none)" maxlength="16" spellcheck="false">
+    <div class="row" style="margin-top:12px"><button class="btn gold" onclick="closeModal();api('/api/staff/setmanager',{user:'${user}',manager:(document.getElementById('mgName')||{}).value||''}).then(()=>{toast('Reporting line updated');stLoadTeam();}).catch(e=>toast(e.message))">Save</button>
+    <span class="grow"></span><button class="btn" onclick="closeModal()">Cancel</button></div>`,true);
+}
+function stLoadMeetings(){
+  api('/api/staff/meetings').then(r=>{
+    const el=document.getElementById('stMeetings');if(!el)return;
+    el.innerHTML=r.meetings.length?r.meetings.slice(0,8).map(mt=>`<div class="lobrow">
+      <span class="grow"><b>${mt.title.replace(/</g,'&lt;')}</b>
+        <span class="tag ${mt.status==='open'?'ok':''}" style="margin-left:6px">${mt.status.toUpperCase()}</span>
+        ${mt.minRank>1?`<span class="tag">${RANKN[mt.minRank]}+</span>`:''}
+        <div class="hint" style="margin:2px 0 0">by ${mt.by} · ${mt.msgs} message(s) · ${mt.decided} decision(s)${mt.open?' · '+mt.open+' item(s) open':''}</div></span>
+      <button class="btn small gold" onclick="mtView(${mt.id})">Open</button></div>`).join('')
+      :'<div class="hint">No meetings yet — open the first one below.</div>';
+  }).catch(()=>{});
+}
+function mtCreate(){
+  const title=((document.getElementById('mtTitle')||{}).value||'').trim();
+  if(!title){toast('Give the meeting a title');return;}
+  const minRank=+(((document.getElementById('mtMin')||{}).value)||1);
+  api('/api/staff/meeting/create',{title,minRank}).then(r=>{toast('🏛 Meeting opened — the team has been notified');mtView(r.id);stLoadMeetings();}).catch(e=>toast(e.message));
+}
+function mtView(id){
+  api('/api/staff/meeting?id='+id).then(r=>{
+    const mt=r.meeting,my=r.myRank,open=mt.status==='open';
+    const chair=mt.by===NET.user||my>=3||NET.profile.admin;
+    showModal(`<h2 style="font-size:19px">🏛 ${mt.title.replace(/</g,'&lt;')}
+        <span class="tag ${open?'ok':''}" style="margin-left:6px">${mt.status.toUpperCase()}</span></h2>
+      <div class="sub">chaired by ${mt.by} · ${new Date(mt.ts).toLocaleString()}</div>
+      <h4 style="font-size:10.5px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin:10px 0 6px">📋 Agenda & decisions</h4>
+      ${mt.agenda.length?mt.agenda.map(a=>{
+        const up=Object.values(a.votes).filter(v=>v>0).length,down=Object.values(a.votes).filter(v=>v<0).length;
+        return `<div style="border:1px solid ${a.status==='decided'?'var(--gold)':'var(--line)'};border-radius:9px;padding:8px 10px;margin-bottom:6px">
+        <div style="font-size:13px">${a.text.replace(/</g,'&lt;')} <span class="hint">— ${a.by}</span></div>
+        ${a.status==='decided'
+          ?`<div style="font-size:12.5px;color:var(--gold);margin-top:4px">✅ ${a.decision.replace(/</g,'&lt;')} <span class="hint">(${a.decidedBy})</span></div>`
+          :`<div class="row" style="margin-top:6px;gap:6px">
+             <button class="btn small ${a.votes[NET.user]===1?'gold':''}" onclick="mtVote(${mt.id},${a.id},1)">👍 ${up}</button>
+             <button class="btn small ${a.votes[NET.user]===-1?'danger':''}" onclick="mtVote(${mt.id},${a.id},-1)">👎 ${down}</button>
+             ${chair&&open?`<button class="btn small" onclick="mtDecide(${mt.id},${a.id})">✅ Record decision</button>`:''}</div>`}
+      </div>`;}).join(''):'<div class="hint">No agenda items yet.</div>'}
+      ${open?`<div class="row" style="margin:6px 0 12px"><input id="mtAg" class="txt" style="margin:0" placeholder="Add an agenda item…" maxlength="300">
+        <button class="btn small" onclick="mtAgenda(${mt.id})">➕</button></div>`:''}
+      <h4 style="font-size:10.5px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin:10px 0 6px">💬 Discussion</h4>
+      <div id="mtLog" style="max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin-bottom:8px">
+        ${mt.messages.length?mt.messages.map(m2=>`<div style="font-size:12.5px;margin-bottom:5px"><b style="color:${m2.by===NET.user?'var(--gold)':'#7fd4a8'}">${m2.by}</b> <span class="hint" style="font-size:10px">${RANKN[m2.rank]||''}</span><br>${m2.text.replace(/</g,'&lt;')}</div>`).join(''):'<div class="hint">Nothing said yet.</div>'}
+      </div>
+      ${open?`<div class="row"><input id="mtMsg" class="txt" style="margin:0" placeholder="Say something…" maxlength="600" onkeydown="if(event.key==='Enter')mtSay(${mt.id})">
+        <button class="btn gold" onclick="mtSay(${mt.id})">Send</button></div>`:''}
+      <div class="row" style="margin-top:12px">
+        ${open&&chair?`<button class="btn danger" onclick="closeModal();api('/api/staff/meeting/close',{id:${mt.id}}).then(()=>{toast('Meeting closed — decisions are on the record');stLoadMeetings();})">🏁 Close meeting</button>`:''}
+        <span class="grow"></span><button class="btn" onclick="closeModal()">Done</button></div>`,true);
+    const lg=document.getElementById('mtLog');if(lg)lg.scrollTop=lg.scrollHeight;
+  }).catch(e=>toast(e.message));
+}
+function mtSay(id){
+  const t=((document.getElementById('mtMsg')||{}).value||'').trim();
+  if(!t)return;
+  api('/api/staff/meeting/msg',{id,text:t}).then(()=>mtView(id)).catch(e=>toast(e.message));
+}
+function mtAgenda(id){
+  const t=((document.getElementById('mtAg')||{}).value||'').trim();
+  if(!t)return;
+  api('/api/staff/meeting/agenda',{id,text:t}).then(()=>mtView(id)).catch(e=>toast(e.message));
+}
+function mtVote(id,aid,v){api('/api/staff/meeting/vote',{id,aid,v}).then(()=>mtView(id)).catch(e=>toast(e.message));}
+function mtDecide(id,aid){
+  showModal(`<h2 style="font-size:18px">✅ Record the decision</h2>
+    <div class="sub">This is written into the meeting record and the team is notified.</div>
+    <input id="mtDec" class="txt" placeholder="The decision (e.g. 'Approved — ship next week')" maxlength="300">
+    <div class="row" style="margin-top:12px"><button class="btn gold" onclick="api('/api/staff/meeting/decide',{id:${id},aid:${aid},decision:(document.getElementById('mtDec')||{}).value||''}).then(()=>{closeModal();mtView(${id});}).catch(e=>toast(e.message))">✅ Record</button>
+    <span class="grow"></span><button class="btn" onclick="closeModal();mtView(${id})">Back</button></div>`,true);
+}
+function stLoadDms(){
+  api('/api/staff/dms').then(r=>{
+    const el=document.getElementById('stDms');if(!el)return;
+    el.innerHTML=r.dms.length?r.dms.slice(0,8).map(d=>{
+      const other=d.a===NET.user?d.b:d.a;
+      return `<div class="lobrow"><span class="grow"><b>${other}</b>
+        <div class="hint" style="margin:2px 0 0">${d.msgs} message(s) · last ${new Date(d.last).toLocaleDateString()}</div></span>
+        <button class="btn small gold" onclick="dmView(${d.id})">Open</button></div>`;}).join('')
+      :'<div class="hint">No 1-on-1s yet.</div>';
+  }).catch(()=>{});
+}
+function dmOpenByName(){
+  const u=((document.getElementById('dmUser')||{}).value||'').trim();
+  if(!u){toast('Whose channel?');return;}
+  dmOpen(u);
+}
+function dmOpen(u){api('/api/staff/dm/open',{user:u}).then(r=>dmView(r.id)).catch(e=>toast(e.message));}
+function dmView(id){
+  api('/api/staff/dm?id='+id).then(r=>{
+    const d=r.dm,other=r.other,senior=d.a===NET.user||NET.profile.admin;
+    const oRank=r.otherRank;
+    showModal(`<h2 style="font-size:19px">🗨 1-on-1 with ${other}
+        <span class="tag" style="margin-left:6px">${RANKI[oRank]} ${RANKN[oRank].toUpperCase()}</span></h2>
+      <div class="sub">Private — only the two of you${NET.profile.admin&&d.a!==NET.user&&d.b!==NET.user?' (admin oversight view)':''}.</div>
+      ${senior?`<div class="row" style="margin:4px 0 10px;gap:6px">
+        ${(NET.profile.admin?oRank<4:oRank+1<r.myRank)?`<button class="btn small gold" onclick="closeModal();stRank('${other}',${oRank+1})">⬆ Promote to ${RANKN[oRank+1]}</button>`:''}
+        ${oRank>1?`<button class="btn small" onclick="closeModal();stRank('${other}',${oRank-1})">⬇ Demote to ${RANKN[oRank-1]}</button>`:''}
+        <button class="btn small" onclick="closeModal();api('/api/staff/setmanager',{user:'${other}',manager:NET.user}).then(()=>{toast('${other} now reports to you');}).catch(e=>toast(e.message))">🧭 Reports to me</button>
+        ${oRank>0?`<button class="btn small danger" onclick="closeModal();stRank('${other}',0)">✕ Remove from staff</button>`:''}</div>`:''}
+      <div id="dmLog" style="max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin-bottom:8px">
+        ${d.messages.length?d.messages.map(m2=>`<div style="font-size:12.5px;margin-bottom:5px"><b style="color:${m2.by===NET.user?'var(--gold)':'#7fd4a8'}">${m2.by}</b> <span class="hint" style="font-size:10px">${new Date(m2.ts).toLocaleTimeString()}</span><br>${m2.text.replace(/</g,'&lt;')}</div>`).join(''):'<div class="hint">Say hello…</div>'}
+      </div>
+      <div class="row"><input id="dmMsg" class="txt" style="margin:0" placeholder="Message…" maxlength="600" onkeydown="if(event.key==='Enter')dmSay(${d.id})">
+        <button class="btn gold" onclick="dmSay(${d.id})">Send</button></div>
+      <div class="row" style="margin-top:12px"><span class="grow"></span><button class="btn" onclick="closeModal();stLoadDms()">Done</button></div>`,true);
+    const lg=document.getElementById('dmLog');if(lg)lg.scrollTop=lg.scrollHeight;
+  }).catch(e=>toast(e.message));
+}
+function dmSay(id){
+  const t=((document.getElementById('dmMsg')||{}).value||'').trim();
+  if(!t)return;
+  api('/api/staff/dm/msg',{id,text:t}).then(()=>dmView(id)).catch(e=>toast(e.message));
 }
 function stTicket(){
   const user=((document.getElementById('tkUser')||{}).value||'').trim();
@@ -2857,7 +3440,8 @@ function renderPlayPage(){
       <div class="row wrap">${['easy','normal','hard'].map(d=>`<button class="chip p1 ${UI.menuDiffB===d?'on':''}" onclick="sDiffB('${d}')">${DIFFS[d].label}</button>`).join('')}</div>
       <div style="height:14px"></div>
       <button class="btn gold" onclick="siteStart('watch',true)">▶ Start match</button></div>
-   </div>${blockCardsHTML((PAGES.extends&&PAGES.extends.play)||[],{type:'ext',key:'play'})}`;
+   </div>${blockCardsHTML((PG().extends&&PG().extends.play)||[],{type:'ext',key:'play'})}`;
+  applyCardOverrides(page,'play');
 }
 function renderLeadersPage(){
   const page=document.getElementById('page');
@@ -2873,7 +3457,9 @@ function renderLeadersPage(){
         <span class="grow"><b class="plink" onclick="viewUser('${p.user}')">${p.user}</b>${p.user===NET.user?' <span style="color:var(--dim)">(you)</span>':''}</span>
         <span style="color:var(--gold);font-weight:700;width:52px;text-align:right">${p.elo}</span>
         <span style="color:var(--dim);font-size:11.5px;width:110px;text-align:right">${p.wins}W ${p.losses}L ${p.draws}D · ${p.games}g</span>
-      </div>`).join('')||'<div class="hint">No players yet.</div>'}</div>`;
+      </div>`).join('')||'<div class="hint">No players yet.</div>'}</div>
+    ${blockCardsHTML((PG().extends&&PG().extends.leaders)||[],{type:'ext',key:'leaders'})}`;
+  applyCardOverrides(page,'leaders');
 }
 function renderProfilePage(){
   const page=document.getElementById('page');
@@ -3265,7 +3851,7 @@ function renderAdminPage(){
         <button class="btn small danger" onclick="admFbDel(${f.id})">🗑</button></div>`).join('')
        :'<div class="hint">Inbox empty.</div>'}</div>
      <div class="card" style="margin-top:14px"><h3>👥 User management</h3>
-      <div class="hint" style="margin-bottom:8px">🔑 password · ✏ edit name/Elo · 🧰 staff role · 🚫 ban · 🗑 delete</div>
+      <div class="hint" style="margin-bottom:8px">🔑 password · ✏ edit name/Elo · 🧰 staff role · 🧪 developer role · 🚫 ban · 🗑 delete</div>
       ${r.users.map(u=>`<div class="lobrow">
         <span class="dot ${u.online?'on':''}"></span>
         <span class="grow"><b class="plink" onclick="viewUser('${u.user}')">${u.user}</b>
@@ -3277,6 +3863,7 @@ function renderAdminPage(){
         ${!u.admin?`
           <button class="btn small" title="Edit name / Elo" onclick="admEdit('${u.user}',${u.elo})">✏</button>
           <button class="btn small" title="${u.staff?'Revoke staff':'Make staff'}" onclick="admin1('setStaff','${u.user}',{staff:${u.staff?'false':'true'}})">${u.staff?'🧰✕':'🧰'}</button>
+          <button class="btn small" title="${u.dev?'Revoke developer':'Make developer'}" onclick="admin1('setdev','${u.user}',{dev:${u.dev?'false':'true'}})">${u.dev?'🧪✕':'🧪'}</button>
           ${u.banned
             ?`<button class="btn small gold" title="Unban" onclick="admin1('unban','${u.user}')">♻</button>`
             :`<button class="btn small danger" title="Ban" onclick="admBan('${u.user}')">🚫</button>`}
@@ -3649,7 +4236,8 @@ function renderRulesPage(){
   <div class="card"><h3>🏆 Playing online</h3>
     <div class="hint" style="line-height:1.7">Hit <b>Find match</b> to queue — you're paired by Elo, widening to anyone after 10 seconds. Or challenge a friend directly from their profile. Wins and losses move your rating (K=32); you can offer draws, resign (with confirmation), and every finished match is saved for <b>replay</b> — with the engine's move-by-move <b>Game Review</b> grading your play.</div></div>
 
-  </div>${blockCardsHTML((PAGES.extends&&PAGES.extends.rules)||[],{type:'ext',key:'rules'})}`;
+  </div>${blockCardsHTML((PG().extends&&PG().extends.rules)||[],{type:'ext',key:'rules'})}`;
+  applyCardOverrides(page,'rules');
 }
 /* ================= MATCH REPLAY ================= */
 let REP=null;
