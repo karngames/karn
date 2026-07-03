@@ -33,6 +33,8 @@ misc.support=misc.support||[];misc.smtp=misc.smtp||null;misc.tickets=misc.ticket
    sharing wifi are never affected. Max 5 accounts per device; banning a
    player can also block their device from creating new accounts.          */
 misc.devices=misc.devices||{};
+misc.knownIssues=misc.knownIssues||[];
+const THEME_LIST=['default','sand','slate','crimson','midnight'];
 const DEV_LIMIT=5;
 function devOf(req){
   const d=String(req.headers['x-dev']||'').toLowerCase();
@@ -137,8 +139,11 @@ function agentSay(tk,text,req,extras){
   }
 }
 function agentEscalate(tk,why){
-  tk.human=true;saveS();
-  notifyAdmins(`🙋 Ticket #${tk.id} (${tk.to}) needs a HUMAN: ${why}`);
+  tk.human=true;
+  bumpPriority(tk,/ban|cheat|report|deletion|security/.test(why)?'high':'normal');
+  saveS();
+  agentReport(tk,why);
+  notifyAdmins(`🙋 Ticket #${tk.id} (${tk.to}) needs a HUMAN [${(tk.priority||'normal').toUpperCase()}]: ${why}`);
 }
 /* --- knowledge base for instant gameplay answers --- */
 const KB=[
@@ -154,8 +159,60 @@ const KB=[
  [/draw|resign/i,'During an online match use the 🤝 button to offer a draw (your opponent can accept or decline) and 🏳 to resign — with a confirmation so no accidents.'],
  [/refit|workshop|armoury|loadout/i,'A tank can be refitted — guns, armour, boost swapped freely — only while it sits on YOUR back rank. Refits are free and instant; drive off the rank and the loadout is locked in.'],
  [/replay|review/i,'Every finished online match is saved. Open it from a profile and hit Review — the engine grades every move (best / good / inaccuracy / mistake / blunder) and shows what it would have played.'],
+ [/\bmov(e|es|ing|ement)\b|how.*(far|fast).*(tank|piece)/i,'Movement: a tank drives in a straight line in the direction it faces, up to its speed — Light 3, Medium 2, Heavy 1 (a Speed Boost adds +1; snipers are always speed 1). Moving any distance costs 1 action. You get 3 actions per turn, max 2 on the same piece. To change direction, spend an action turning (any of the 8 facings). Tanks with destroyed tracks cannot move or turn until repaired.'],
+ [/\bturn(ing)?\b.*(face|facing|direction|rotate)|rotate|facing/i,'Turning: spending 1 action lets a tank face any of the 8 directions. Facing matters — guns fire into the arc the tank faces, and tanks can only drive straight ahead. A tank with destroyed tracks cannot turn until repaired.'],
+ [/\bactions?\b.*(turn|many|per)|per turn/i,'You get 3 actions per turn. Moving, turning, shooting and repairing each cost 1 action, and no single piece may take more than 2 actions in a turn. Refitting on your back rank is free.'],
+ [/line of sight|\blos\b|shoot|shooting|\bfire\b|\bfiring\b/i,'Shooting: guns fire in straight or diagonal lines, like a chess queen. Every square between shooter and target must be empty — walls and tanks block the shot (exception: snipers shoot past tanks; only walls stop them). Any shot can instead target the TRACKS to immobilise the victim.'],
+ [/track|immobil|repair/i,'Track shots: any gun can shoot a tank\'s tracks instead of its hull. A tracked tank cannot move OR turn until its owner spends an action repairing it — and it only rolls again the round after the repair.'],
+ [/sound|audio|volume|mute|sfx/i,'Piece sounds can be turned on or off any time: open your 👤 Profile page and use the 🔊 Piece sounds toggle under Personalisation. The setting is remembered on your device.'],
+ [/theme|board colou?r|design|skin|personali[sz]/i,'Board themes: your 👤 Profile page has a Personalisation section with 5 board designs — Emerald (default), Desert Sand, Slate, Crimson and Midnight. Pick one and it applies instantly and saves to your account. You can also just tell me which one you want and I\'ll switch it for you.'],
  [/win|goal|objective/i,'Two ways to win: destroy every enemy piece, or hold BOTH gold ◇ squares in the middle of the enemy back rank with two of your tanks at once.'],
 ];
+const PRI_RANK={low:0,normal:1,high:2,urgent:3};
+function bumpPriority(tk,p){
+  if((PRI_RANK[p]||0)>(PRI_RANK[tk.priority||'low']||0)){tk.priority=p;saveS();}
+}
+function agentReport(tk,reason){
+  const u=users[tk.to];
+  const stmts=tk.messages.filter(m=>m.by===tk.to).map(m=>'  - '+m.text.slice(0,140));
+  const rec=/ban/.test(reason)?'Review the ban reason and match history, then reply on the ticket; unban from User management if justified.'
+    :/report|cheat/.test(reason)?'Check the flagged account\'s recent replays (Game Review helps); warn, tag or ban as appropriate.'
+    :/recovery|password|email/.test(reason)?'Create a recovery code from the Staff page and post it on this ticket.'
+    :/deletion/.test(reason)?'Confirm identity on the ticket, then delete the account from User management.'
+    :'Read the thread and take over the conversation.';
+  tk.notes=tk.notes||[];
+  tk.notes.push({by:BOT,ts:Date.now(),text:
+    'CASE REPORT — ticket #'+tk.id+'\n'+
+    'Player: '+tk.to+' ('+(u?('Elo '+u.elo+', '+(u.banned?'BANNED':'active')+', '+u.games+' games'):'account missing')+')\n'+
+    'Priority: '+(tk.priority||'normal')+'\n'+
+    'Escalated because: '+reason+'\n'+
+    'Player statements:\n'+(stmts.join('\n')||'  (none)')+'\n'+
+    'Recommended action: '+rec});
+  saveS();
+}
+function isNonsense(t){
+  const raw=String(t||'').trim();
+  if(raw.length<6)return true;
+  if(/(.)\1{4,}/.test(raw))return true;
+  const sLow=raw.toLowerCase().replace(/[^a-z ]/g,' ');
+  const words=sLow.split(/\s+/).filter(Boolean);
+  if(!words.length)return true;
+  const COMMON=new Set(('the a i my me is it of to and for in on you your help please with game account password login ban banned name user tank sniper gun wall play match elo cant can not work bug error broken how what why when where does do want need lost forgot change stuck report player friend email code level board').split(' '));
+  const real=words.filter(w=>COMMON.has(w)||(w.length>=3&&/[aeiou]/.test(w)&&!/^(asdf|qwer|zxcv|hjkl|wasd|sdfg|dfgh|fghj)/.test(w)&&!/(.)\1{2,}/.test(w)));
+  if(raw.length<90&&real.length<Math.max(1,Math.ceil(words.length*0.34)))return true;
+  /* readable but with no support-relevant content ("i like cheese lol") */
+  const TOPIC=new Set(('help password login log ban banned unban account bug error broken crash crashes freeze freezes frozen load loads loading stuck board game match tank sniper gun wall piece pieces move moves moving turn shoot shooting elo rating rank friend request email mail code recovery reset name username change theme colour color colors colours design sound sounds profile private public setting settings work works working worked cant wont doesnt didnt isnt screen phone mobile tablet click clicking button page slow lag laggy disconnect disconnected connection server ticket staff human person report cheat cheater cheating hack hacked delete deletion question how why rule rules play playing problem issue wrong fix fixed broke support armor armour module upgrade level damage shot shots range win lose lost losing draw forfeit timer clock replay review army setup thanks thank cheers solved sorted resolved good great okay ok done bye password').split(' '));
+  if(raw.length<120&&!words.some(w=>TOPIC.has(w)))return true;
+  return false;
+}
+function sigWords(t){
+  const stop=new Set(('the a is it to and for of in on my i you your with game that this when have has bug error broken not work its very just really').split(' '));
+  return [...new Set(String(t).toLowerCase().replace(/[^a-z ]/g,' ').split(/\s+/)
+    .filter(w=>w.length>3&&!stop.has(w)))].slice(0,8);
+}
+function matchKI(ws){
+  return misc.knownIssues.find(k=>k.status==='open'&&k.sig.filter(w=>ws.includes(w)).length>=2);
+}
 function agentHandle(tk,msg,req){
   if(tk.from!=='support'||tk.human||tk.status!=='open')return;
   if((tk.botReplies||0)>=6){
@@ -167,6 +224,19 @@ function agentHandle(tk,msg,req){
   const u=users[tk.to];
   const st=tk.agent=tk.agent||{codes:0};
   const has=re=>re.test(m);
+  /* ---- joke / gibberish filter ---- */
+  if(isNonsense(msg)){
+    st.nonsense=(st.nonsense||0)+1;
+    if(st.nonsense>=2){
+      tk.messages.push({by:BOT,text:`This ticket has been closed as no actionable support request was received. You're welcome to open a new ticket at any time — just include a short description of the problem.`,ts:Date.now()});
+      tk.status='closed';tk.closedBy=BOT;saveS();
+      if(users[tk.to])addNotif(tk.to,{type:'info',text:`Ticket #${tk.id} was closed as it did not contain an actionable support request. You're welcome to open a new one at any time.`});
+      return;
+    }
+    saveS();
+    agentSay(tk,`Thanks for getting in touch. I wasn't able to identify a support request in this message, so I haven't opened an investigation. If you do need help, reply with a brief description of the problem or question — for example "I forgot my password" or "the board doesn't load on my phone" — and I'll get straight onto it. Please note that if the next message also contains no clear request, this ticket will be closed automatically.`,req);
+    return;
+  }
   /* ---- multi-intent detection ---- */
   const wantHuman=has(/\b(human|person|real staff|agent|someone real|speak to (a )?(person|staff|admin)|talk to (a )?(person|staff|admin))\b/);
   const thanks=has(/\b(thanks|thank you|solved|fixed|sorted|works now|all good|resolved)\b/);
@@ -178,7 +248,7 @@ function agentHandle(tk,msg,req){
   const iDelete=has(/\b(delete|remove|close) (my )?account\b/);
   const angry=has(/\b(ridiculous|unfair|furious|angry|scam|terrible|awful|joke)\b/)||/!{2,}/.test(m);
   const kbHit=KB.find(([re])=>re.test(m));
-  const isQuestion=/\bhow|what|why|when|where|does|can i|\?/.test(m);
+  const isQuestion=/\bhow|what|why|when|where|which|does|can i|can you|explain|rule|question|tell me|\?/.test(m)||m.split(/\s+/).length<=6;
   const anyIssue=iBan||iPass||iName||iBug||iCheat||iDelete;
   /* explicit human request always wins */
   if(wantHuman){
@@ -195,6 +265,31 @@ function agentHandle(tk,msg,req){
   /* ---- compose one reply that covers everything detected ---- */
   const parts=[];const extras={};
   if(angry)parts.push(`I can hear this has been frustrating — sorry about that. Let's get it fixed.`);
+  /* ---- direct changes to simple user settings ---- */
+  let didSettings=false;
+  if(u){
+    const wantsOff=/\b(off|stop|disable|unsubscribe|no more)\b/.test(m);
+    const wantsOn=/\b(back on|enable|turn on|start)\b/.test(m);
+    if(/friend request/.test(m)&&/email/.test(m)&&(wantsOff||wantsOn)){
+      u.emailPrefs.friendReq=wantsOff?false:true;
+      saveU();didSettings=true;
+      parts.push(`Done — friend-request emails are now ${u.emailPrefs.friendReq?'ON':'OFF'} for your account. (Security and staff emails always stay on.) You can also flip this on your Profile page.`);
+    }
+    if(/profile/.test(m)&&/\bprivate\b/.test(m)){
+      u.private=true;saveU();didSettings=true;
+      parts.push(`Your profile is now PRIVATE — only you and staff can see your match history.`);
+    }else if(/profile/.test(m)&&/\bpublic\b/.test(m)){
+      u.private=false;saveU();didSettings=true;
+      parts.push(`Your profile is now PUBLIC — other players can browse your match history and replays.`);
+    }
+    if(/(theme|board|colou?r|design|skin)/.test(m)){
+      const thm=THEME_LIST.find(t2=>m.includes(t2));
+      if(thm){
+        u.theme=thm;saveU();didSettings=true;
+        parts.push(`Board theme switched to "${thm}" — you'll see it when you reload the game. All the designs are on your Profile page too.`);
+      }
+    }
+  }
   if(iBan){
     agentEscalate(tk,'ban appeal — only the admin can lift bans');
     parts.push(`About the suspension: account bans can only be lifted by the server administrator, so I've escalated your appeal to them directly with everything you've written here. They'll reply on this ticket, and you'll get an email the moment they do.`);
@@ -210,6 +305,7 @@ function agentHandle(tk,msg,req){
     }
   }
   if(iPass||iName){
+    bumpPriority(tk,'normal');
     const what=iPass&&iName?'reset your password and change your username':iPass?'reset your password':'change your username';
     if(u&&u.email&&misc.smtp&&misc.smtp.host){
       extras.code=makeRecovery(tk.to);
@@ -222,23 +318,53 @@ function agentHandle(tk,msg,req){
     }
   }
   if(iBug){
-    misc.feedback.unshift({id:misc.fseq++,from:tk.to,text:'[via support ticket #'+tk.id+'] '+String(msg).slice(0,900),ts:Date.now()});
-    if(misc.feedback.length>200)misc.feedback.length=200;
-    saveS();
-    notifyAdmins(`🐛 Bug report from ticket #${tk.id} (${tk.to}) filed to the feedback inbox`);
-    parts.push(`I've filed your bug report word-for-word in the admin's inbox so nothing gets lost. Anything that helps reproduce it (what you clicked, what you expected, what happened) — just reply here and I'll attach it.`);
+    bumpPriority(tk,'normal');
+    const ws=sigWords(msg);tk.bugSig=ws;
+    let ki=matchKI(ws);
+    if(!ki){
+      /* two similar fresh reports promote into a known problem */
+      const twin=misc.tickets.find(o=>o.id!==tk.id&&o.from==='support'&&o.bugSig&&Date.now()-o.ts<48*3600e3&&o.bugSig.filter(w=>ws.includes(w)).length>=2);
+      if(twin){
+        ki={id:misc.fseq++,sig:[...new Set([...ws,...twin.bugSig])].slice(0,10),
+          title:ws.slice(0,3).join(' '),count:1,tids:[twin.id],ts:Date.now(),status:'open'};
+        misc.knownIssues.push(ki);twin.knownOf=ki.id;
+        notifyAdmins(`📌 New known problem KP-${ki.id}: "${ki.title}" (multiple similar reports)`);
+      }
+    }
+    if(ki){
+      ki.count++;ki.tids.push(tk.id);tk.knownOf=ki.id;
+      bumpPriority(tk,ki.count>=3?'high':'normal');
+      if(ki.count===3)notifyAdmins(`📈 Known problem KP-${ki.id} ("${ki.title}") is trending — ${ki.count} reports`);
+      saveS();
+      parts.push(`This matches a problem we're already tracking (KP-${ki.id} — "${ki.title}", ${ki.count} reports so far), so I've merged your ticket into it. You'll be notified the moment it's fixed.`);
+    }else{
+      misc.feedback.unshift({id:misc.fseq++,from:tk.to,text:'[via support ticket #'+tk.id+'] '+String(msg).slice(0,900),ts:Date.now()});
+      if(misc.feedback.length>200)misc.feedback.length=200;
+      saveS();
+      notifyAdmins(`🐛 Bug report from ticket #${tk.id} (${tk.to}) filed to the feedback inbox`);
+      parts.push(`I've filed your bug report word-for-word in the admin's inbox so nothing gets lost. Anything that helps reproduce it (what you clicked, what you expected, what happened) — just reply here and I'll attach it.`);
+    }
   }
   if(iDelete){
     agentEscalate(tk,'account deletion request');
     parts.push(`Account deletion has to be done by the administrator — I've passed your request straight to them. They'll confirm on this ticket before anything is removed.`);
   }
-  if(!anyIssue&&kbHit&&isQuestion){
+  if(!anyIssue&&!didSettings&&kbHit&&isQuestion){bumpPriority(tk,'low');
     parts.push(kbHit[1]);
     parts.push(`Anything else you'd like to know? The 📖 Rules page in the game covers everything with live diagrams — or reply "human" for a real person.`);
   }
   if(!parts.length){
-    parts.push(`Thanks for getting in touch — I'm the automated KARN assistant and I resolve most requests instantly. You wrote: "${String(msg).slice(0,120)}" — could you tell me a little more?\n\nHere's what I can do right away:\n• "I forgot my password" — I'll email you a recovery code\n• "I want to change my username" — recovery code for that too\n• "I've been banned" — I'll escalate your appeal to the admin\n• "I found a bug" or "report a player" — filed straight to the admin\n• Any rules question — instant answer\n\nOr reply "human" and I'll hand you to the staff team.`);
-  }
+    st.confused=(st.confused||0)+1;
+    if(st.confused>=3){
+      agentEscalate(tk,'assistant could not resolve after several attempts');
+      parts.push(`I clearly haven't been able to help with this one, so I've handed your ticket to the staff team with a full summary — a real person will reply here. Sorry for the run-around, and thanks for bearing with me.`);
+    }else if(st.confused===2){
+      parts.push(`Sorry — I'm still not following. In one short sentence, what would you like to happen? For example: "explain how movement works", "turn off friend request emails", "reset my password". If I miss again I'll bring in a member of staff, or reply "human" to skip straight to them.`);
+    }else{
+      parts.push(`Thanks for getting in touch — I'm the automated KARN assistant and I resolve most requests instantly. You wrote: "${String(msg).slice(0,120)}" — could you tell me a little more?\n\nHere's what I can do right away:\n• "I forgot my password" — I'll email you a recovery code\n• "I want to change my username" — recovery code for that too\n• "I've been banned" — I'll escalate your appeal to the admin\n• "I found a bug" or "report a player" — filed straight to the admin\n• Rules questions ("how does moving work?") — instant answer\n• Settings ("turn off friend request emails", "make my profile private", "switch my theme to crimson")\n\nOr reply "human" and I'll hand you to the staff team.`);
+    }
+    saveS();
+  }else st.confused=0;
   agentSay(tk,parts.join('\n\n'),req,extras);
 }
 function agentSayClosed(tk,req){
@@ -821,7 +947,8 @@ try{
       if(tk.messages.length<50)tk.messages.push({by:t,text:msg,ts:Date.now()});
     }else{
       tk={id:misc.fseq++,to:t,from:'support',subject:'Support request from '+t,
-        ts:Date.now(),status:'open',key:crypto.randomBytes(16).toString('hex'),
+        ts:Date.now(),status:'open',priority:'low',notes:[],
+        key:crypto.randomBytes(16).toString('hex'),
         messages:[{by:t,text:msg,ts:Date.now()}]};
       misc.tickets.unshift(tk);
       if(misc.tickets.length>200)misc.tickets.length=200;
@@ -849,7 +976,7 @@ try{
     if(!rate(ip+':guest',60,5*60e3))return bad(res,'Too many attempts',429);
     const tk=misc.tickets.find(x=>x.key===String(body.key||''));
     if(!tk)return bad(res,'Invalid or expired ticket link',404);
-    return json(res,200,{ticket:tk});
+    return json(res,200,{ticket:{...tk,notes:undefined}});
   }
   if(p==='/api/tickets/guest/reply'&&req.method==='POST'){
     if(!rate(ip+':guest',60,5*60e3))return bad(res,'Too many attempts',429);
@@ -914,6 +1041,10 @@ try{
       M.email=em||null;saveU();
     }
     if(typeof body.emailFriendReq==='boolean'){M.emailPrefs.friendReq=body.emailFriendReq;saveU();}
+    if(body.theme!==undefined){
+      if(THEME_LIST.includes(String(body.theme)))M.theme=String(body.theme);
+      saveU();
+    }
     return json(res,200,{ok:1,private:M.private,email:M.email||'',emailPrefs:M.emailPrefs});
   }
 
@@ -929,7 +1060,7 @@ try{
     return json(res,200,{players,open,match:mine?matchInfo(mine,me):null,
       queue:{waiting:qe?Date.now()-qe.ts:null,mode:qe?qe.mode:null,size:queue.length},
       me:{...pub(me),admin:M.admin,staff:M.staff,privateFlag:M.private,email:M.email||'',
-        emailFriendReq:M.emailPrefs.friendReq!==false,
+        emailFriendReq:M.emailPrefs.friendReq!==false,theme:M.theme||'default',
         unread:M.notifs.filter(n=>!n.read).length,reqIn:M.reqIn.length,balV:misc.balV,
         latest:M.notifs.slice(0,6),
         chIn:Object.values(challenges).filter(c=>c.to===me).map(c=>c.id)}});
@@ -1132,6 +1263,7 @@ try{
       const msg=String(body.message||'').trim().slice(0,2000);
       if(!subject||msg.length<3)return bad(res,'A ticket needs a subject and a message');
       const tk={id:misc.fseq++,to:t,from:me,subject,body:msg,ts:Date.now(),status:'open',
+        priority:'normal',notes:[],
         key:crypto.randomBytes(16).toString('hex'),
         messages:[{by:me,text:msg,ts:Date.now()}]};
       misc.tickets.unshift(tk);
@@ -1163,6 +1295,12 @@ try{
       }
       return json(res,200,{ok:1});
     }
+    if(p==='/api/staff/ticket/priority'&&req.method==='POST'){
+      const tk=misc.tickets.find(x=>x.id===+body.id);
+      const pr=String(body.p||'');
+      if(tk&&['low','normal','high','urgent'].includes(pr)){tk.priority=pr;saveS();}
+      return json(res,200,{ok:1});
+    }
     if(p==='/api/staff/ticket/reopen'&&req.method==='POST'){
       const tk=misc.tickets.find(x=>x.id===+body.id);
       if(tk&&tk.status==='closed'){
@@ -1179,7 +1317,7 @@ try{
     const tk=misc.tickets.find(x=>x.id===+url.searchParams.get('id'));
     if(!tk)return bad(res,'Ticket not found',404);
     if(tk.to!==me&&tk.from!==me&&!STAFF)return bad(res,'Not your ticket',403);
-    return json(res,200,{ticket:tk,canReply:tk.status==='open',isStaff:STAFF});
+    return json(res,200,{ticket:STAFF?tk:{...tk,notes:undefined},canReply:tk.status==='open',isStaff:STAFF});
   }
   /* both sides of a ticket can carry the conversation forward */
   if(p==='/api/ticket/reply'&&req.method==='POST'){
@@ -1254,7 +1392,8 @@ try{
         activeMatches:Object.values(matches).filter(m=>m.status==='active').length,
         feedbackCount:misc.feedback.length,
         smtp:misc.smtp?{host:misc.smtp.host,user:misc.smtp.user,from:misc.smtp.from||misc.smtp.user}:null,
-        mailLog:mailLog.slice(0,10)},
+        mailLog:mailLog.slice(0,10),
+        known:misc.knownIssues.filter(k=>k.status==='open').slice(0,10)},
         users:players.map(pl=>({...pl,admin:users[pl.user].admin,staff:users[pl.user].staff,
           banned:users[pl.user].banned||null,flagged:users[pl.user].flagged||null})),
         recent:Object.values(saved).sort((a,b)=>b.ended-a.ended).slice(0,15).map(r=>matchSummary(r)),
@@ -1447,6 +1586,26 @@ try{
         }
       }
       saveS();
+      return json(res,200,{ok:1});
+    }
+    if(p==='/api/admin/known/resolve'&&req.method==='POST'){
+      const ki=misc.knownIssues.find(k=>k.id===+body.id);
+      if(ki&&ki.status==='open'){
+        ki.status='resolved';
+        for(const tid of ki.tids){
+          const tk=misc.tickets.find(x=>x.id===tid);
+          if(tk&&tk.status==='open'&&tk.from==='support'){
+            tk.status='closed';tk.closedBy='KARN Assistant';
+            tk.messages.push({by:'KARN Assistant',text:`Good news — the known problem this ticket was merged into (KP-${ki.id}: "${ki.title}") has been fixed. Thanks for reporting it!`,ts:Date.now()});
+            if(users[tk.to]){
+              addNotif(tk.to,{type:'ticket',from:'KARN Assistant',data:{tid:tk.id},text:`Known problem KP-${ki.id} is fixed — ticket #${tk.id} closed`});
+              sendUserMail(tk.to,`[KARN] Fixed: the problem you reported`,`KP-${ki.id} resolved`,
+                `The problem you reported ("${ki.title}") has been fixed. Thanks for helping make KARN better!`,null);
+            }
+          }
+        }
+        saveS();
+      }
       return json(res,200,{ok:1});
     }
     if(p==='/api/admin/untag'&&req.method==='POST'){

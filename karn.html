@@ -459,7 +459,7 @@ function genActions(s,player){
       if(!t.track)acts.push({type:'shoot',pid:p.id,tid:t.id,mode:'track'});
     }
     if(p.track)acts.push({type:'repair',pid:p.id});
-    for(let d=0;d<8;d++)if(d!==p.dir)acts.push({type:'rotate',pid:p.id,dir:d});
+    else for(let d=0;d<8;d++)if(d!==p.dir)acts.push({type:'rotate',pid:p.id,dir:d}); /* destroyed tracks: no moving OR turning */
   }
   return acts;
 }
@@ -1075,7 +1075,7 @@ function renderBoard(){
             el('line',{x1:c.cx+a*11,y1:c.cy+b*11,x2:c.cx+a*23,y2:c.cy+b*23},g);
           g.addEventListener('click',ev=>{ev.stopPropagation();tryShoot(p,t,ev);});
         }
-        if((p.acted||0)<RULES.perPiece&&G.actionsLeft>0){
+        if(!p.track&&(p.acted||0)<RULES.perPiece&&G.actionsLeft>0){
           for(let d=0;d<8;d++){
             if(d===p.dir)continue;
             const ang=d*45+(G.human===1?180:0);
@@ -1334,6 +1334,11 @@ function execAction(a){
     :`${who}: ${pieceName(p)} fires at ${pieceName(t)} (${coord(t.x,t.y)}) — <b>−${dmgOf(p,t)} HP</b>${(p.gun==='sn'||p.gun==='ds')&&dmgOf(p,t)>GUNS[p.gun].dmg?' (armour-piercing!)':p.gun==='dg'&&dmgOf(p,t)===4?' (point blank blast!)':''}`;
   else if(a.type==='repair')msg=`${who}: crew repairs the tracks of ${pieceName(p)} at ${coord(p.x,p.y)}`;
   const ev=applyAction(G,a);
+  if(a.type==='move')sfx('move');
+  else if(a.type==='rotate')sfx('rotate');
+  else if(a.type==='repair')sfx('repair');
+  else if(a.type==='shoot')sfx(a.mode==='track'?'track':(p&&(p.gun==='sn'||p.gun==='ds'))?'snipe':'shoot');
+  if(ev.kill)sfx('kill');
   if(ev.kill)msg+=' — <b>DESTROYED!</b> 💥';
   logMsg(msg,cls);
   if(ev.lvl!=null){
@@ -1366,11 +1371,11 @@ function endTurn(){
   if(G.mode==='online'){
     if(ender===NET.side&&!NET.applying)postEvent('endTurn',{});
     UI.busy=(G.turn!==NET.side);
-    if(!UI.busy)toast('Your turn');
+    if(!UI.busy){sfx('turn');toast('Your turn');}
     render();
   }
   else if(isAI(G.turn))queueAI();
-  else{UI.busy=false;toast(G.mode==='pvp'?PNAME[G.turn]+"'s turn":'Your turn');render();}
+  else{UI.busy=false;if(!isAI(G.turn))sfx('turn');toast(G.mode==='pvp'?PNAME[G.turn]+"'s turn":'Your turn');render();}
 }
 function aiRefit(pl){
   if(G.level[pl]<2)return;
@@ -1697,7 +1702,7 @@ function showRules(){
     <p><b>Light</b>: SPD 3 · 1 HP · 1 AP. <b>Medium</b>: SPD 2 · 2 HP · 2 AP. <b>Heavy</b>: SPD 1 · 3 HP · 3 AP. One gun max per piece; armour gives +1 HP per AP. Snipers mount only on light bases and slow them to SPD 1.</p>
     <p><b>Small Gun</b> 180° arc, range 1, −1 HP, 1 AP · <b>Big Gun</b> 180° arc, range 2, <b>−2 HP</b>, 2 AP · <b>Sniper</b> one line, range 4, −1 HP · <b>Double Sniper</b> one line, range 5, −2 HP (Level 2). Snipers fire <b>armour-piercing rounds</b>: +1 damage against Heavy tanks.</p>
     <h4>Shooting</h4>
-    <p>Choose to deal <b>HP damage</b> or <b>shoot out the tracks</b>: a tracked-out piece cannot move until its owner spends an action repairing it, and it moves again only the round after the repair.</p>
+    <p>Choose to deal <b>HP damage</b> or <b>shoot out the tracks</b>: a tracked-out piece cannot move <b>or turn</b> until its owner spends an action repairing it, and it moves again only the round after the repair.</p>
     <p><b>Line of sight.</b> Guns fire in <b>straight or diagonal lines, like a chess queen</b>. A 180° gun can fire down any of the five lines that aren't behind it; snipers fire only down the single line they face. Every square on the line to the target must be clear — no shooting through walls or other tanks. Exactly like a queen, a diagonal shot passes cleanly through the gap between two diagonally-touching walls. Exception: <b>snipers</b> (and double snipers) can pick off <b>any enemy tank along their firing line</b>, even behind other tanks. Walls still block sniper fire.</p>
     <h4>Level 2</h4>
     <p>When your first piece reaches the enemy back rank you reach <b>Level 2</b>: double snipers, the Dirt Gun (Heavy only, 360°, range 1, −4 HP straight ahead / −1 all around, 2 AP) and speed-boost components (+1 SPD, costs 1 AP, not on lights) become available when refitting at your own back rank. Refitting is free but only while the piece stays on your back rank.</p>
@@ -1715,6 +1720,109 @@ try{
   if(s.token){NET.token=s.token;NET.user=s.user;NET.server=s.server||'';}
 }catch(e){}
 function netSave(){try{localStorage.setItem('karnNet',JSON.stringify({token:NET.token,user:NET.user,server:NET.server}));}catch(e){}}
+/* ---- board themes (personalisation) ---- */
+const THEMES={
+  default:{label:'Emerald (default)',sqA:'#0f7a5c',sqB:'#0b5a44',wall:'#39445c',wallHi:'#4d5a77'},
+  sand:{label:'Desert Sand',sqA:'#c9a86a',sqB:'#ab8a50',wall:'#4f4335',wallHi:'#6b5b47'},
+  slate:{label:'Slate',sqA:'#5c6b7a',sqB:'#47545f',wall:'#252d38',wallHi:'#38455a'},
+  crimson:{label:'Crimson',sqA:'#8a4444',sqB:'#6e3333',wall:'#3a1f26',wallHi:'#553040'},
+  midnight:{label:'Midnight',sqA:'#2e3f5c',sqB:'#233148',wall:'#151d2c',wallHi:'#2a3a55'}
+};
+function applyTheme(t){
+  const th=THEMES[t]||THEMES.default;
+  try{
+    const r=document.documentElement&&document.documentElement.style;
+    if(r){
+      r.setProperty('--sqA',th.sqA);r.setProperty('--sqB',th.sqB);
+      r.setProperty('--wall',th.wall);r.setProperty('--wallHi',th.wallHi);
+    }
+  }catch(e){}
+  UI.theme=THEMES[t]?t:'default';
+  try{localStorage.setItem('karnTheme',UI.theme);}catch(e){}
+}
+try{applyTheme(localStorage.getItem('karnTheme')||'default');}catch(e){}
+
+/* ---- piece sounds (synthesised, no assets) ---- */
+let AC=null,SND=true;
+try{SND=localStorage.getItem('karnSnd')!=='off';}catch(e){}
+function sfx(kind){
+  if(!SND)return;
+  try{
+    if(!AC)AC=new (window.AudioContext||window.webkitAudioContext)();
+    if(AC.state==='suspended')AC.resume();
+    const t0=AC.currentTime;
+    const tone=(f0,f1,dur,type,vol,dl)=>{
+      const o=AC.createOscillator(),g=AC.createGain();
+      o.type=type||'triangle';
+      o.frequency.setValueAtTime(f0,t0+(dl||0));
+      o.frequency.exponentialRampToValueAtTime(Math.max(30,f1),t0+(dl||0)+dur);
+      g.gain.setValueAtTime(vol||.1,t0+(dl||0));
+      g.gain.exponentialRampToValueAtTime(.001,t0+(dl||0)+dur);
+      o.connect(g);g.connect(AC.destination);
+      o.start(t0+(dl||0));o.stop(t0+(dl||0)+dur+.03);
+    };
+    const noise=(dur,vol,dl,filt,freq,q)=>{ /* shaped noise burst through a filter — mechanical, not beepy */
+      const n=AC.createBufferSource(),g=AC.createGain(),f=AC.createBiquadFilter();
+      const buf=AC.createBuffer(1,Math.max(64,AC.sampleRate*dur|0),AC.sampleRate);
+      const d=buf.getChannelData(0);
+      for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*(1-i/d.length);
+      n.buffer=buf;f.type=filt||'lowpass';f.frequency.value=freq||700;if(q)f.Q.value=q;
+      g.gain.setValueAtTime(.0001,t0+(dl||0));
+      g.gain.linearRampToValueAtTime(vol||.25,t0+(dl||0)+.012);
+      g.gain.exponentialRampToValueAtTime(.001,t0+(dl||0)+dur);
+      n.connect(f);f.connect(g);g.connect(AC.destination);
+      n.start(t0+(dl||0));
+    };
+    const bell=(f0,dur,vol,dl)=>{ /* soft bell: fundamental + fading harmonics, gentle attack */
+      [[f0,vol],[f0*2,vol*.25],[f0*2.98,vol*.08]].forEach(([f,v])=>{
+        const o=AC.createOscillator(),g=AC.createGain();
+        o.type='sine';o.frequency.value=f;
+        g.gain.setValueAtTime(.0001,t0+(dl||0));
+        g.gain.linearRampToValueAtTime(v,t0+(dl||0)+.015);
+        g.gain.exponentialRampToValueAtTime(.001,t0+(dl||0)+dur);
+        o.connect(g);g.connect(AC.destination);
+        o.start(t0+(dl||0));o.stop(t0+(dl||0)+dur+.05);
+      });
+    };
+    if(kind==='move'){tone(95,55,.16,'triangle',.14);tone(60,40,.2,'sine',.08,.02);}
+    else if(kind==='rotate'){ /* turret servo: three soft mechanical ticks winding down */
+      noise(.035,.11,0,'bandpass',950,7);
+      noise(.035,.09,.055,'bandpass',780,7);
+      noise(.045,.08,.11,'bandpass',640,7);
+      tone(110,78,.14,'triangle',.05);
+    }
+    else if(kind==='shoot'){noise(.18,.15,0,'lowpass',420);tone(130,45,.2,'triangle',.08);}
+    else if(kind==='snipe'){ /* muffled crack + distant echo */
+      noise(.05,.09,0,'bandpass',1600,2);
+      tone(700,240,.11,'triangle',.06,.005);
+      noise(.16,.09,.05,'lowpass',380);
+    }
+    else if(kind==='kill'){ /* soft deep rumble, felt more than heard */
+      noise(.6,.2,0,'lowpass',280);
+      tone(85,24,.6,'triangle',.09);
+      noise(.28,.05,.12,'bandpass',1100,1.5);
+      noise(.35,.05,.24,'lowpass',500);
+    }
+    else if(kind==='track'){ /* metallic clank on the tracks + heavy thud */
+      noise(.04,.16,0,'bandpass',2500,4);
+      noise(.12,.2,.03,'lowpass',350);
+      tone(85,48,.15,'triangle',.09,.02);
+    }
+    else if(kind==='repair'){ /* two wrench tinks + a soft ratchet */
+      noise(.04,.12,0,'bandpass',3200,9);
+      noise(.04,.1,.14,'bandpass',2700,9);
+      noise(.05,.06,.26,'bandpass',1400,5);
+    }
+    else if(kind==='turn'){bell(523.25,.55,.08);bell(659.25,.65,.06,.13);} /* gentle C5-E5 chime */
+  }catch(e){}
+}
+function toggleSound(){
+  SND=!SND;
+  try{localStorage.setItem('karnSnd',SND?'on':'off');}catch(e){}
+  toast(SND?'🔊 Piece sounds on':'🔇 Piece sounds off');
+  if(SITE.page==='profile')renderPage();
+}
+
 /* persistent per-device id — used to limit account creation per DEVICE
    (deliberately not per network, so family on the same wifi are unaffected) */
 NET.dev=(function(){
@@ -1795,6 +1903,7 @@ async function pollLobby(){
   NET.lobby=r;
   if(r.me){
     NET.profile=r.me;processIncoming(r.me);
+    if(r.me.theme&&r.me.theme!==UI.theme)applyTheme(r.me.theme);
     if(r.me.balV!=null){
       if(NET.balV==null)NET.balV=r.me.balV;
       else if(r.me.balV!==NET.balV&&!NET.balToasted){
@@ -2655,6 +2764,7 @@ function renderStaffPage(){
       <span class="grow"><b>#${t.id}</b> to <b class="plink" onclick="viewUser('${t.to}')">${t.to}</b> — ${t.subject.replace(/</g,'&lt;')}
         <div class="hint" style="margin:2px 0 0">by ${t.from} · ${new Date(t.ts).toLocaleString()}</div></span>
       <span class="tag ${t.status==='open'?'ok':''}">${t.status}</span>
+      ${t.priority&&t.priority!=='low'?`<span class="tag ${t.priority==='high'||t.priority==='urgent'?'warn':''}">${t.priority}</span>`:''}
       <button class="btn small" onclick="viewTicket(${t.id})">View</button>
       ${t.status==='open'?`<button class="btn small" onclick="api('/api/staff/ticket/close',{id:${t.id}}).then(()=>{toast('Closed');renderPage();})">✓</button>`:''}</div>`).join('')
       :'<div class="hint">No tickets yet.</div>';
@@ -2798,6 +2908,14 @@ function renderProfilePage(){
     ${m.email?`<div class="row" style="margin-top:8px">
       <button class="chip ${m.emailFriendReq!==false?'on':''}" onclick="toggleFrEmail()">📧 Friend request emails: ${m.emailFriendReq!==false?'ON':'OFF'}</button>
       <span class="hint" style="margin:0">Security and staff emails can't be turned off.</span></div>`:''}
+    <h4 style="font-size:10.5px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin:14px 0 6px">🎨 Personalisation</h4>
+    <div class="row wrap">${Object.keys(THEMES).map(t2=>`
+      <button class="chip ${UI.theme===t2?'on':''}" onclick="pickTheme('${t2}')" title="${THEMES[t2].label}">
+        <span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${THEMES[t2].sqA};vertical-align:-1px"></span><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${THEMES[t2].sqB};vertical-align:-1px;margin-right:5px"></span>${THEMES[t2].label}</button>`).join('')}
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="chip ${SND?'on':''}" onclick="toggleSound()">${SND?'🔊 Piece sounds: ON':'🔇 Piece sounds: OFF'}</button>
+    </div>
     <div class="row" style="margin-top:12px"><button class="btn gold" onclick="showPage('play')">⚔ Find a game</button>
       <span class="grow"></span><button class="btn small danger" onclick="netLogout()">⏻ Log out</button></div>
    </div>
@@ -2814,6 +2932,14 @@ function saveEmail(){
     if(NET.profile)NET.profile.email=v;
     toast(v?'📧 Recovery email saved':'Recovery email removed');
   }).catch(e=>toast(e.message));
+}
+function pickTheme(t){
+  applyTheme(t);
+  if(G&&G.pieces&&G.pieces.length)initBoard();
+  render();
+  if(NET.token)api('/api/profile',{theme:t}).then(()=>{if(NET.profile)NET.profile.theme=t;}).catch(()=>{});
+  toast('🎨 '+(THEMES[t]?THEMES[t].label:t));
+  if(SITE.page==='profile')renderPage();
 }
 function toggleFrEmail(){
   const v=!(NET.profile&&NET.profile.emailFriendReq!==false);
@@ -2891,9 +3017,13 @@ function viewTicket(tid){
       <div class="sub" style="margin-bottom:6px">${t.subject.replace(/</g,'&lt;')}</div>
       <div class="row" style="margin-bottom:10px">
         <span class="tag ${t.status==='open'?'ok':''}">${t.status.toUpperCase()}</span>
+        ${t.priority?`<span class="tag ${t.priority==='high'||t.priority==='urgent'?'warn':''}">${t.priority.toUpperCase()}</span>`:''}
+        ${t.knownOf?`<span class="tag">KP-${t.knownOf}</span>`:''}
         <span class="tag">${t.from} ↔ ${t.to}</span>
-        <span class="tag">${nMsg} message${nMsg===1?'':'s'}</span>
-        <span class="tag">opened ${new Date(t.ts).toLocaleDateString()}</span></div>
+        <span class="tag">${nMsg} message${nMsg===1?'':'s'}</span></div>
+      ${staff&&(t.notes||[]).length?`<div style="background:#241d10;border:1px dashed var(--gold);border-radius:9px;padding:9px 11px;margin-bottom:10px;font-size:11.5px;color:#d8c48a;white-space:pre-wrap;max-height:140px;overflow-y:auto"><b>🤖 STAFF-ONLY CASE NOTES</b>\n${t.notes.map(n2=>n2.text.replace(/</g,'&lt;')).join('\n\n')}</div>`:''}
+      ${staff?`<div class="row" style="margin-bottom:8px"><span class="hint" style="margin:0">Priority:</span>
+        ${['low','normal','high','urgent'].map(pr=>`<button class="chip ${t.priority===pr?'on':''}" style="padding:3px 8px;font-size:11px" onclick="api('/api/staff/ticket/priority',{id:${t.id},p:'${pr}'}).then(()=>viewTicket(${t.id}))">${pr}</button>`).join('')}</div>`:''}
       <div id="tkThread" style="max-height:300px;overflow-y:auto;padding:4px 2px">${thread}</div>
       ${t.status==='open'
         ?`<textarea id="tkReply" class="txt" rows="2" style="resize:vertical" placeholder="Write a reply…"></textarea>
@@ -3122,6 +3252,11 @@ function renderAdminPage(){
          <span class="grow">${m2.subject.replace(/</g,'&lt;')} → ${m2.to}${m2.ok?'':' — <span style=\"color:var(--bad)\">'+String(m2.err||'failed').replace(/</g,'&lt;').slice(0,60)+'</span>'}</span>
          <span style="color:var(--dim);font-size:10.5px">${new Date(m2.ts).toLocaleTimeString()}</span></div>`).join('')}`:''}
       </div>
+     ${(r.metrics.known&&r.metrics.known.length)?`<div class="card" style="margin-top:14px;border-color:var(--gold)"><h3>📌 Known problems (auto-merged reports)</h3>
+      ${r.metrics.known.map(k=>`<div class="lobrow">
+        <span class="grow"><b>KP-${k.id}</b> — ${String(k.title).replace(/</g,'&lt;')}
+          <div class="hint" style="margin:2px 0 0">${k.count} report${k.count===1?'':'s'} · since ${new Date(k.ts).toLocaleDateString()}</div></span>
+        <button class="btn small gold" onclick="api('/api/admin/known/resolve',{id:${k.id}}).then(()=>{toast('Resolved — reporters notified');renderPage();})">✓ Mark fixed</button></div>`).join('')}</div>`:''}
      <div class="card" style="margin-top:14px"><h3>📬 Feedback inbox</h3>
       ${fb.feedback.length?fb.feedback.map(f=>`<div class="lobrow">
         <span class="grow"><b class="plink" onclick="viewUser('${f.from}')">${f.from}</b>
@@ -3501,7 +3636,7 @@ function renderRulesPage(){
 
   <div class="card"><h3>🔧 Shooting tracks</h3>
     <div style="text-align:center">${tank('M','sg',0,false,true,1)}</div>
-    <div class="hint">Any shot can instead <b>blow off the tracks</b>: the victim cannot move until its owner spends an action repairing — and even then it only rolls again the round after. Perfect for stopping a runner heading to your ◇ squares.</div></div>
+    <div class="hint">Any shot can instead <b>blow off the tracks</b>: the victim cannot move or turn until its owner spends an action repairing — and even then it only rolls again the round after. Perfect for stopping a runner heading to your ◇ squares.</div></div>
 
   <div class="card"><h3>⭐ Level 2</h3>
     <div style="display:flex;gap:10px;justify-content:center">${tank('L','ds',0,false,false,0)}${tank('H','dg',1,false,false,0)}${tank('H','bg',0,true,false,0)}</div>
