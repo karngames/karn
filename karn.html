@@ -2237,17 +2237,40 @@ async function recComplete(code){
   }catch(e){const el=document.getElementById('netErr');if(el)el.textContent=e.message;}
 }
 /* ---- feedback ---- */
-function showFeedback(){
-  showModal(`<h2 style="font-size:19px">💬 Send feedback</h2>
-    <div class="sub">Goes straight to the server admin's inbox — bugs, ideas, reports, anything.</div>
-    <textarea id="fbText" class="txt" rows="5" style="resize:vertical" placeholder="Write your message…"></textarea>
-    <div style="height:12px"></div>
-    <div class="row"><button class="btn gold" onclick="sendFeedback()">📬 Send</button>
-      <button class="btn" onclick="closeModal()">Cancel</button></div>`,true);
+/* ---- support hub: feedback OR a support ticket, one place ---- */
+function showSupportHub(mode){
+  mode=mode||'ticket';
+  showModal(`<h2 style="font-size:19px">🛟 Support</h2>
+    <div class="sub">Need help, or just have thoughts? Pick one:</div>
+    <div class="row" style="margin-bottom:12px">
+      <button class="chip ${mode==='ticket'?'on':''}" onclick="showSupportHub('ticket')">🎫 Support request</button>
+      <button class="chip ${mode==='fb'?'on':''}" onclick="showSupportHub('fb')">💬 Feedback</button>
+    </div>
+    ${mode==='ticket'
+      ?`<div class="hint" style="margin-bottom:6px">Opens a ticket under your account. Our automated assistant replies in seconds — recovery codes, rules answers, escalations — and you can say "human" any time to reach real staff. Replies land in your 🔔 Notifications${NET.profile&&NET.profile.email?' and your email':''}.</div>
+        <textarea id="shText" class="txt" rows="5" style="resize:vertical" placeholder="Describe the problem — account issues, another player, anything…"></textarea>
+        <div style="height:12px"></div>
+        <div class="row"><button class="btn gold" onclick="hubTicket()">🎫 Open ticket</button>
+          <button class="btn" onclick="closeModal()">Cancel</button></div>`
+      :`<div class="hint" style="margin-bottom:6px">Ideas, praise, complaints, balance thoughts — goes straight to the server admin's inbox.</div>
+        <textarea id="shText" class="txt" rows="5" style="resize:vertical" placeholder="What's on your mind?"></textarea>
+        <div style="height:12px"></div>
+        <div class="row"><button class="btn gold" onclick="sendFeedback()">📬 Send feedback</button>
+          <button class="btn" onclick="closeModal()">Cancel</button></div>`}`,true);
 }
+function showFeedback(){showSupportHub('fb');}
 function sendFeedback(){
-  const v=(document.getElementById('fbText')||{}).value||'';
+  const v=(document.getElementById('shText')||{}).value||'';
   api('/api/feedback',{text:v}).then(()=>{closeModal();toast('📬 Feedback sent — thank you!');}).catch(e=>toast(e.message));
+}
+function hubTicket(){
+  const v=((document.getElementById('shText')||{}).value||'').trim();
+  if(v.length<3){toast('Describe the problem first');return;}
+  api('/api/support/request',{user:NET.user,message:v}).then(r=>{
+    closeModal();
+    toast('🎫 Ticket #'+r.ticket+' opened');
+    if(r.ticket)setTimeout(()=>viewTicket(r.ticket),300);  /* straight into the conversation */
+  }).catch(e=>toast(e.message));
 }
 function authGuest(){
   document.getElementById('auth').classList.add('hidden');
@@ -2294,7 +2317,7 @@ function renderNav(){
     ${NET.token?`<button class="nbtn ${SITE.page==='profile'?'on':''}" onclick="showPage('profile')">👤&nbsp; Profile</button>`:''}
     ${NET.token&&(me.staff||me.admin)?`<button class="nbtn ${SITE.page==='staff'?'on':''}" onclick="showPage('staff')">🧰&nbsp; Staff</button>`:''}
     ${NET.token&&me.admin?`<button class="nbtn ${SITE.page==='admin'?'on':''}" onclick="showPage('admin')">🛡&nbsp; Admin</button>`:''}
-    ${NET.token?`<button class="nbtn" onclick="showFeedback()">💬&nbsp; Feedback</button>`:''}
+    ${NET.token?`<button class="nbtn" onclick="showSupportHub()">🛟&nbsp; Support</button>`:''}
     <button class="nbtn ${SITE.page==='rules'?'on':''}" onclick="showPage('rules')">📖&nbsp; Rules</button>
     ${(PAGES.custom||[]).filter(pageVisible).map(p=>`<button class="nbtn ${SITE.page==='c_'+p.id?'on':''}" onclick="showPage('c_${p.id}')">${p.icon}&nbsp; ${p.title.replace(/</g,'&lt;')}</button>`).join('')}
     <div style="flex:1"></div>
